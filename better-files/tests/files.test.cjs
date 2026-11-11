@@ -19,10 +19,10 @@ const TREE = { '/repo': [['d', 'src'], ['f', 'b.md'], ['f', 'a.md']], '/repo/src
 // Every file under /repo, as git ls-files -z would list it.
 const EVERY = 'a.md\0b.md\0new.txt\0src/main.go\0';
 
-function world({ everything = EVERY, found = '', copyImage, diff = '', layout = {}, mode = 'sidebar', viewer, file, target, tree = TREE, status = ' M b.md\0M  src/main.go\0?? new.txt\0', editors = ['dev.zed.Zed'], top = '/repo', machine = null, cwd = '/repo', texts = {}, agents = [], known = [], sharedInit = {}, hcResult } = {}) {
+function world({ spaceFolder = '/repo', focusOn = null, everything = EVERY, found = '', copyImage, diff = '', layout = {}, mode = 'sidebar', viewer, file, target, tree = TREE, status = ' M b.md\0M  src/main.go\0?? new.txt\0', editors = ['dev.zed.Zed'], top = '/repo', machine = null, cwd = '/repo', texts = {}, agents = [], known = [], sharedInit = {}, hcResult } = {}) {
   const store = new Map(Object.entries(sharedInit));
   const ran = [], execs = [], sent = [], clipboard = [], closed = [], overlays = [], urls = [], scrolled = [];
-  const live = { layout, panes: [{ pane: 'p1', tab: 'tab1', cwd }], focused: { space: 's', tab: 'tab1', pane: 'p1', cwd }, agents, texts: { ...texts } };
+  const live = { layout, panes: [{ pane: 'p1', tab: 'tab1', cwd }, ...(focusOn ? [focusOn] : [])], focused: focusOn ? { space: 's', tab: focusOn.tab, pane: focusOn.pane, cwd: null } : { space: 's', tab: 'tab1', pane: 'p1', cwd }, agents, texts: { ...texts } };
   const timers = [];
   const pending = [];
   const cx = {
@@ -63,7 +63,7 @@ function world({ everything = EVERY, found = '', copyImage, diff = '', layout = 
     theme: () => new Proxy({}, { get: (_t, k) => `#${String(k)}` }),
     settings: () => ({ font_family: 'Code', font_size: 14 }), window: () => ({ platform: 'macos' }),
     props: () => ({ mode, viewer, file, target, space: 's', overlay: 'ov1' }),
-    spaces: () => [{ id: 's', active: true, folder: '/repo', machine, tabs: [{ id: 'tab1' }] }],
+    spaces: () => [{ id: 's', active: true, folder: spaceFolder, machine, tabs: [{ id: 'tab1' }, ...(focusOn ? [{ id: focusOn.tab, active: true }] : [])] }],
     panes: () => live.panes, focused: () => live.focused, agents: () => live.agents,
     shared: (k) => store.get(k), setShared: (k, v) => { store.set(k, v); return null; },
     run: (name, args) => {
@@ -811,4 +811,18 @@ test('the list is read again when it is old, and a failed read says why', async 
   broken.context.exec = async () => ({ code: 1, stdout: '', stderr: 'find: permission denied' });
   await typeFilter(broken, 'x');
   assert.match(strings(find(broken.mod.render(), 'files-list')), /^find: permission denied$/);
+});
+
+test('with a file tab focused from the start, the tree shows where the space\'s terminal is, not where the space was made', async () => {
+  const viewer = { pane: 'p2', tab: 'tab2', mod: 'better-files', cwd: null };
+  const h = await ready({ spaceFolder: '/made-here', focusOn: viewer });
+  assert.equal(h.mod.root, '/repo');
+  assert.match(strings(find(h.mod.render(), 'files-title')), /^Files\s+repo$/);
+  h.tick();
+  assert.equal(h.mod.root, '/repo', 'and it stays there');
+  const alone = await ready({ spaceFolder: '/made-here', focusOn: viewer });
+  alone.live.panes.splice(0, 1);
+  alone.mod.place = null;
+  alone.tick();
+  assert.equal(alone.mod.root, '/made-here', 'a space with no terminal falls back to its own folder');
 });
