@@ -10,6 +10,7 @@ const runtime = path.join(__dirname, "../mods/better-sidebar");
 function harness() {
   const live = { spaces: [], panes: [], machines: [] };
   const pending = [],
+    scrolled = [],
     calls = [],
     commands = [],
     overlays = [],
@@ -83,6 +84,7 @@ function harness() {
     window: () => ({ active: true }),
     props: () => ({}),
     Popover: { new: (id) => element().id(id) },
+    ScrollHandle: { new: () => ({ scroll_to_item: (index) => scrolled.push(index) }) },
     shared: (key) => values[key],
     setShared: (key, value) => {
       values[key] = value;
@@ -119,6 +121,7 @@ function harness() {
   mod.init({}, cx);
   return {
     live,
+    scrolled,
     calls,
     commands,
     overlays,
@@ -721,5 +724,49 @@ test("dragging moves a space only in Herdr's order; sorted, a press just selects
   find(tree, `space-${first}`).handlers.mouse_down_left({}, h.cx);
   find(h.mod.body(h.colors, false), `space-${first}`).handlers.mouse_up_left({}, h.cx);
   assert.deepEqual(JSON.parse(JSON.stringify(h.commands)), [{ name: "space.select", args: { id: "maps" } }]);
+});
+
+// Keyboard space switching: the list scrolls the shown space's row into view, once per change.
+function scrolling() {
+  const h = harness();
+  h.live.spaces = ["trails", "maps", "api", "notes"].map((id) => ({ id, name: id, folder: `/${id}`, tabs: [], active: id === "trails" }));
+  for (const sp of h.live.spaces) h.mod.shown.add(sp.id);
+  const show = (id) => h.live.spaces.forEach((sp) => (sp.active = sp.id === id));
+  return { h, show };
+}
+
+test("the list scrolls to the shown space when it changes, and only then", () => {
+  const { h, show } = scrolling();
+  h.mod.body(h.colors, false);
+  assert.deepEqual(h.scrolled, [0]);
+  h.mod.body(h.colors, false);
+  assert.deepEqual(h.scrolled, [0], "no new space, no scroll");
+  show("api");
+  h.mod.body(h.colors, false);
+  assert.deepEqual(h.scrolled, [0, 2]);
+  assert.equal(find(h.mod.body(h.colors, false), "spaces-list").attributes.track_scroll.length, 1);
+});
+
+test("the row it scrolls to counts the rows drawn above it", () => {
+  const { h, show } = scrolling();
+  // As in the lists view: pinned agents on top, and each space's tabs under it.
+  h.mod.above = () => ["pinned agent"];
+  h.mod.under = ({ w }) => [`${w.id} tab 1`, `${w.id} tab 2`];
+  show("api");
+  h.mod.body(h.colors, false);
+  assert.deepEqual(h.scrolled, [7]);
+  show("notes");
+  h.mod.body(h.colors, true);
+  assert.deepEqual(h.scrolled, [7, 4], "the rail has no rows under a space");
+});
+
+test("a shown space that isn't listed, as in a folded machine, doesn't scroll", () => {
+  const { h, show } = scrolling();
+  h.live.spaces.push({ id: "far", name: "far", folder: "/far", tabs: [], machine: "server", active: false });
+  h.mod.shown.add("far");
+  h.mod.folded.add("server");
+  show("far");
+  h.mod.body(h.colors, false);
+  assert.deepEqual(h.scrolled, []);
 });
 
