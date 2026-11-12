@@ -62,8 +62,6 @@ export const readMethods = {
   // one keeps the tree where it was instead of jumping back to the space's.
   location() {
     const space = spaces().find((s) => s.active);
-    // A folder picked with Up a folder holds until Back to the pane's folder.
-    if (this.pin && this.pin.space === space?.id) return (this.place = { ...this.pin });
     const f = focused();
     const pane = f?.pane ? panes().find((p) => p.pane === f.pane) : null;
     const on =

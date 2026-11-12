@@ -959,16 +959,18 @@ test('a folder picked from the matches opens even while the tree is still loadin
   assert.ok(find(h.mod.render(), 'files-row-src/main.go'), 'the folder has its files');
 });
 
-test('moving to another folder drops the last one\'s filter error and the folder it was to scroll to', async () => {
+test('moving to another folder drops the last one\'s filter error, marker and the folder it was to scroll to', async () => {
   const tree = { ...TREE, '/elsewhere': [['d', 'src']], '/elsewhere/src': [] };
   const h = await ready({ tree });
   await typeFilter(h, 'sr');
   click(h, 'files-row-src');
   h.mod.indexError = 'find: permission denied';
+  h.mod.cursor = 'src';
   h.live.panes[0].cwd = '/elsewhere';
   h.live.focused.cwd = '/elsewhere';
   h.tick();
   assert.equal(h.mod.indexError, null);
+  assert.equal(h.mod.cursor, null, 'a marker from the last folder goes');
   await h.flush();
   h.mod.render();
   assert.deepEqual(h.scrolled, []);
@@ -1083,32 +1085,6 @@ test('dotfiles hide and show with the eye button or ., in the tree and the match
   assert.equal(again.kept.get('better-files.dotfiles'), 'true');
   await typeFilter(again, 'ci');
   assert.deepEqual(rowIds(again), ['files-row-.github', 'files-row-.github/ci.yml']);
-});
-
-test('the up button shows the folder above and stays there, and the locate button follows the pane again', async () => {
-  const h = await ready({ cwd: '/repo/src', tree: { ...TREE, '/': [['d', 'repo']] } });
-  assert.equal(h.mod.root, '/repo/src');
-  assert.equal(find(h.mod.render(), 'files-tool-follow'), undefined);
-  await h.command('focus');
-  assert.equal(h.mod.cursor, 'main.go');
-  click(h, 'files-tool-up');
-  await h.flush();
-  assert.equal(h.mod.root, '/repo');
-  assert.equal(h.mod.cursor, null, 'a marker from the last folder goes');
-  assert.ok(find(h.mod.render(), 'files-row-src'));
-  h.tick();
-  assert.equal(h.mod.root, '/repo', 'it no longer follows the pane');
-  click(h, 'files-tool-up');
-  await h.flush();
-  assert.equal(h.mod.root, '/');
-  assert.ok(find(h.mod.render(), 'files-row-repo'));
-  assert.equal(find(h.mod.render(), 'files-tool-up').handlers.click, undefined, 'nothing is above /');
-  h.live.panes.push({ pane: 'p9', tab: 'tab9', mod: 'better-files' });
-  h.live.focused = { space: 's', tab: 'tab9', pane: 'p9' };
-  click(h, 'files-tool-follow');
-  await h.flush();
-  assert.equal(h.mod.root, '/repo/src', 'back where it was, even with a file tab focused');
-  assert.equal(find(h.mod.render(), 'files-tool-follow'), undefined);
 });
 
 test('collapse all closes every folder, and a marker inside one moves to its top folder', async () => {
