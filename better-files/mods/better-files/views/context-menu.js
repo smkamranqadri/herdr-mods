@@ -4,6 +4,7 @@ import { v_flex } from "gpui-base";
 import { closeOverlay, props, shared, theme } from "herdr";
 import { foundEditors } from "../actions/outside.js";
 import { agentName } from "../actions/agents.js";
+import { CLIPBOARD } from "../actions/files.js";
 import { TEXT } from "./ui.js";
 
 export const contextMenuMethods = {
@@ -32,6 +33,12 @@ export const contextMenuMethods = {
     ]);
     if (!target.dir && target.changed && shared("better-files.has-changes"))
       groups.push([{ id: "diff", label: "Show diff", run: (cx) => this.showDiff(target, cx) }]);
+    const clip = shared(CLIPBOARD);
+    const files = [];
+    if (local) files.push({ id: "copy-file", label: "Copy", run: () => this.copyFile(target) });
+    if (local && clip)
+      files.push({ id: "paste-file", label: "Paste", run: () => this.pasteFile(target) });
+    if (files.length) groups.push(files);
     groups.push([
       {
         id: "copy-relative",
@@ -40,8 +47,25 @@ export const contextMenuMethods = {
       },
       { id: "copy-path", label: "Copy full path", run: (cx) => cx.write_to_clipboard(target.path) },
     ]);
+    if (this.agentChoices(target).length)
+      groups.push([
+        {
+          id: "send",
+          label: "Send to agent",
+          keep: true,
+          run: (cx) => {
+            this.menuPage = "agents";
+            cx.notify();
+          },
+        },
+      ]);
+    return groups.filter((group) => group.length);
+  },
+
+  // Every agent the file can go to: running ones, a sub-agent under each, and new ones.
+  agentChoices(target) {
     const running = this.spaceAgents(this.menuSpace);
-    groups.push([
+    return [
       ...running.flatMap((a) => [
         {
           id: `agent-${a.address}`,
@@ -63,8 +87,7 @@ export const contextMenuMethods = {
         label: `Send to ${agentName(a)}`,
         run: () => this.askForPrompt(target, a.address),
       })),
-    ]);
-    return groups.filter((group) => group.length);
+    ];
   },
 
   menuView() {
@@ -82,7 +105,24 @@ export const contextMenuMethods = {
       .bg(t.popover)
       .text_color(t.foreground)
       .text_size(TEXT.tab);
-    this.menuItems(target).forEach((group, i) => {
+    const groups =
+      this.menuPage === "agents"
+        ? [
+            [
+              {
+                id: "back",
+                label: "‹ Back",
+                keep: true,
+                run: (cx) => {
+                  this.menuPage = null;
+                  cx.notify();
+                },
+              },
+            ],
+            this.agentChoices(target),
+          ]
+        : this.menuItems(target);
+    groups.forEach((group, i) => {
       if (i) view.child(div().h(1).my(3).flex_none().bg(t.border));
       for (const item of group)
         view.child(
@@ -98,6 +138,7 @@ export const contextMenuMethods = {
             .hover((s) => s.bg(t.hover))
             .on_click((_e, cx) => {
               item.run(cx);
+              if (item.keep) return;
               closeOverlay(props()?.overlay);
             })
             .child(div().truncate().child(item.label)),

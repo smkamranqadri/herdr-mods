@@ -1,6 +1,6 @@
 # Better Files
 
-A read-only file browser for a person's Herdr window, for directing agents rather than writing code by hand. Judge any addition by whether it helps someone see where an agent has been, read its work, or hand a file on. Editing and file operations stay out.
+A file browser, read-only except for copy and paste, for a person's Herdr window, for directing agents rather than writing code by hand. Judge any addition by whether it helps someone see where an agent has been, read its work, or hand a file on. Editing, renaming and deleting stay out; copy and paste only add files, never overwrite.
 
 ## What you see
 
@@ -12,7 +12,7 @@ A click opens the file in one shared centre tab per space, named after the file,
 
 Image files show fitted to the pane instead of the editor, through a copy in `mods/better-files/cache/`, because `image()` only loads from under Herdr's folder; a space on another machine says it can't show them. The centre tab has one title row, the same as a Better Changes diff: file, folder and Preview while it's the shared one. It publishes that to `shared("pane-heads")`, which Better Changes' pane header shows, and draws its own 30px row only under another header. A Markdown file opens rendered, with Preview and Code beside Keep tab to switch to the file view; the choice is kept per tab, and `settings.markdown` sets the first one. Keep tab and Open in float over the file's top right corner, or sit in that row. Below is the file, read-only, in the code font at the terminals' size.
 
-Right-click opens a popup at the pointer with groups separated by rules: Open and Open in new tab (files); Open in each editor, Open in default app (files) and Show in Finder (this computer only); Show diff (a changed file, with Better Changes installed); Copy relative path and Copy full path; Send to each agent in the space, each also as `<name> (spawn)`, and to a new one of each installed kind.
+Right-click opens a popup at the pointer with groups separated by rules: Open and Open in new tab (files); Open in each editor, Open in default app (files) and Show in Finder (this computer only); Show diff (a changed file, with Better Changes installed); Copy and Paste (this computer only; Paste only after a Copy, into the folder or beside the file, never overwriting: a taken name gets ` copy`, then ` copy 2`); Copy relative path and Copy full path; one Send to agent item, which swaps the popup for a list of each agent in the space, each also as `<name> (spawn)`, and a new one of each installed kind, with a Back item.
 
 Choosing an agent opens a box docked at the bottom of the panel with who it goes to, the path, and a prompt that's required. Only Send delivers.
 
@@ -50,4 +50,4 @@ Herdr's shipped layouts are read-only, so the sidebar only shows in a layout the
 - A click reuses one centre tab, a double-click keeps it, and the next click opens another.
 - An open file updates when it changes on disk, without losing your place when it hasn't.
 - A Markdown file opens rendered, Preview and Code switch it per tab, and its links and pictures work.
-- Right-click offers only what applies, and Send to an agent delivers the path.
+- Right-click offers only what applies, and Send to agent opens the list of agents and delivers the path.

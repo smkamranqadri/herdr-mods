@@ -1,4 +1,4 @@
-// Better Files: a read-only file browser. One class plays three roles, each its own copy:
+// Better Files: a file browser that opens files read-only. One class plays three roles, each its own copy:
 //   the sidebar        the tree, and the box for a prompt to an agent
 //   a viewer           a file in a centre tab
 //   the menu           a popup at the pointer on right-click
@@ -20,6 +20,7 @@ import { readMethods } from "./files/reads.js";
 import { openMethods } from "./actions/open.js";
 import { outsideMethods } from "./actions/outside.js";
 import { agentMethods } from "./actions/agents.js";
+import { fileMethods } from "./actions/files.js";
 import { menuMethods } from "./actions/menus.js";
 import { treeMethods } from "./views/tree.js";
 import { viewerMethods } from "./views/viewer.js";
@@ -135,6 +136,7 @@ Object.assign(
   outsideMethods,
   agentMethods,
   menuMethods,
+  fileMethods,
   treeMethods,
   viewerMethods,
   contextMenuMethods,
