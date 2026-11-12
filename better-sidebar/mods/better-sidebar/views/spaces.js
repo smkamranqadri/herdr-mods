@@ -1,7 +1,7 @@
 // The spaces list: right-aligned branches, nested worktrees and a PR status line.
 // Repository facts follow each space's first terminal.
 import { div } from "gpui-kit";
-import { v_flex, h_flex } from "gpui-base";
+import { v_flex, h_flex, ScrollHandle } from "gpui-base";
 import {
   spaces,
   machines,
@@ -20,7 +20,19 @@ import { PRStatusObserver, prPlaceKey, prAppearance } from "../git/pr-status.js"
 import { spaceFolder, checkoutKey, readCheckout } from "../git/checkouts.js";
 import { loadSettings, duration } from "../settings.js";
 import { findNode } from "./find-node.js";
-import { TEXT, Icon, IconButton, Badge, Rail } from "./ui.js";
+import { TEXT, Icon, IconButton, Badge, Rail, Menu, MenuLabel, MenuOption } from "./ui.js";
+
+// How the spaces list is ordered, picked from the menu beside New space and kept in shared
+// state like the agents' sort. Manual is Herdr's own order, the one dragging changes.
+const SPACE_SORTS = [
+  { id: "manual", label: "Manual", icon: "grip-vertical" },
+  { id: "recent", label: "Recent", icon: "clock" },
+  { id: "name", label: "Name", icon: "arrow-down-a-z" },
+];
+const spaceSortOf = () => SPACE_SORTS.find((s) => s.id === shared("spaces.sort")) ?? SPACE_SORTS[0];
+// When something in a space last changed state: the latest of its tabs' changes, or 0 when
+// nothing has since Herdr started.
+const lastChange = (w) => Math.max(0, ...w.tabs.flatMap((tab) => [tab.changed_at ?? 0, tab.working_since ?? 0]));
 
 const USUAL_BRANCHES = new Set(["main", "master"]);
 const rowHeight = ({ tree }) => (tree ? 28 : 30);
@@ -76,6 +88,11 @@ export class Spaces {
     this.born = {};
     this.pressed = null;
     this.over = null;
+    this.sortOpen = false;
+    this.sortFocus = cx.focus_handle();
+    // Brings the shown space's row into view when the shown space changes, as from a key.
+    this.listScroll = ScrollHandle.new();
+    this.scrolledTo = null;
     this.machines = [];
     this.folded = new Set();
     try {
@@ -337,14 +354,34 @@ export class Spaces {
       placed.add(r.g.repo);
       kids.forEach((k, n) => out.push({ ...k, tree: n === kids.length - 1 ? "└─" : "├─" }));
     }
-    return out;
+    return this.sorted(out);
+  }
+
+  // The rows in the picked order. A main space and its worktrees move together, the worktrees
+  // still under it in the same order; for Recent the group goes by its latest change. Ties
+  // keep Herdr's order.
+  sorted(rows) {
+    const sort = spaceSortOf().id;
+    if (sort === "manual") return rows;
+    const groups = [];
+    for (const r of rows) (r.tree ? groups.at(-1) : groups[groups.length] = []).push(r);
+    const name = (g) => g[0].w.name;
+    const recent = (g) => Math.max(...g.map((r) => lastChange(r.w)));
+    const before =
+      sort === "name"
+        ? (a, b) => name(a).localeCompare(name(b), undefined, { sensitivity: "base" })
+        : (a, b) => (recent(b) === recent(a) ? 0 : recent(b) > recent(a) ? 1 : -1);
+    return groups.sort(before).flat();
   }
 
   // The rows, under a header per machine once one isn't this computer.
   grouped(t, collapsed) {
     const rows = this.ordered();
+    // Each space's rows, its own and those under it, so the list can scroll to the shown one.
+    this.drawn = {};
     // `under`, set by the lists view, adds rows beneath a space: its agents.
-    const draw = (r) => (collapsed ? [this.compact(r, t)] : [this.row(r, t), ...(this.under?.(r) ?? [])]);
+    const draw = (r) =>
+      (this.drawn[r.w.id] = collapsed ? [this.compact(r, t)] : [this.row(r, t), ...(this.under?.(r) ?? [])]);
     const remote = [
       ...new Set([
         ...rows.map((r) => r.w.machine).filter(Boolean),
@@ -648,7 +685,9 @@ export class Spaces {
       })
       .on_mouse_move((_e, cx) => {
         const source = spaces()[this.pressed];
-        const over = source && (source.machine ?? null) === (w.machine ?? null) ? i : null;
+        // Only Herdr's own order can be dragged; a sorted list would put it back.
+        const manual = spaceSortOf().id === "manual";
+        const over = manual && source && (source.machine ?? null) === (w.machine ?? null) ? i : null;
         if (this.pressed !== null && this.over !== over) {
           this.over = over;
           cx.notify();
@@ -768,6 +807,51 @@ export class Spaces {
     });
   }
 
+  // The sort menu, then New space, for the header and the lists view's tab bar.
+  headerButtons(collapsed = false) {
+    return h_flex()
+      .gap(2)
+      .items_center()
+      .when(!collapsed, (el) => el.child(this.sortMenu()))
+      .child(this.newSpaceButton());
+  }
+
+  sortMenu() {
+    const sort = spaceSortOf();
+    return Menu({
+      id: "space-sort-menu",
+      open: this.sortOpen,
+      focus: this.sortFocus,
+      onOpenChange: (open, cx) => {
+        this.sortOpen = open;
+        cx.notify();
+      },
+      trigger: IconButton({
+        id: "space-sort",
+        icon: sort.icon,
+        label: `Sort spaces: ${sort.label}`,
+        iconSize: 14,
+        muted: true,
+      }),
+      children: [
+        MenuLabel("Sort spaces"),
+        ...SPACE_SORTS.map((s) =>
+          MenuOption({
+            id: `space-sort-${s.id}`,
+            icon: s.icon,
+            label: s.label,
+            selected: s.id === sort.id,
+            onClick: (cx) => {
+              setShared("spaces.sort", s.id);
+              this.sortOpen = false;
+              cx.notify();
+            },
+          }),
+        ),
+      ],
+    });
+  }
+
   header(t, collapsed) {
     return h_flex()
       .h(31)
@@ -778,10 +862,12 @@ export class Spaces {
       .text_size(TEXT.label)
       .text_color(t.dim)
       .when(!collapsed, (el) => el.child("Spaces"))
-      .child(this.newSpaceButton());
+      .child(this.headerButtons(collapsed));
   }
 
   body(t, collapsed) {
+    const rows = [...(this.above?.() ?? []), ...this.grouped(t, collapsed)];
+    this.revealShown(rows);
     return v_flex()
       .id("spaces-list")
       .flex_1()
@@ -794,7 +880,20 @@ export class Spaces {
         this.pressed = null;
         cx.notify();
       })
-      .children(this.above?.() ?? [])
-      .children(this.grouped(t, collapsed));
+      .track_scroll(this.listScroll)
+      .children(rows);
+  }
+
+  // Once per change of the shown space: scroll the last row under it into view, which brings
+  // the space's own row and its tabs on screen too. A row already on screen stays put, so this
+  // never fights your own scrolling. A space that isn't listed, as in a folded machine, waits
+  // until it is.
+  revealShown(rows) {
+    const shown = spaces().find((s) => s.active)?.id ?? null;
+    if (shown === this.scrolledTo) return;
+    const at = rows.indexOf(this.drawn[shown]?.at(-1));
+    if (at === -1) return;
+    this.scrolledTo = shown;
+    this.listScroll.scroll_to_item(at);
   }
 }
