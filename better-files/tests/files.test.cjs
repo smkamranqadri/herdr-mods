@@ -6,7 +6,7 @@ const path = require('node:path');
 const vm = require('node:vm');
 
 const root = path.join(__dirname, '../mods/better-files');
-const FILES = ['settings.js', 'files/model.js', 'files/file-icons.js', 'files/filter.js', 'views/ui.js', 'files/reads.js', 'actions/open.js', 'actions/outside.js', 'actions/agents.js', 'actions/menus.js', 'views/tree.js', 'views/filter.js', 'views/tools.js', 'views/keys.js', 'views/viewer.js', 'views/context-menu.js', 'main.js'];
+const FILES = ['settings.js', 'files/model.js', 'files/file-icons.js', 'files/filter.js', 'views/ui.js', 'files/reads.js', 'actions/open.js', 'actions/outside.js', 'actions/agents.js', 'actions/files.js', 'actions/menus.js', 'views/tree.js', 'views/filter.js', 'views/tools.js', 'views/keys.js', 'views/viewer.js', 'views/context-menu.js', 'main.js'];
 const source = FILES.map((f) => fs.readFileSync(path.join(root, f), 'utf8'))
   .join('\n')
   .replace(/^import\s+[\s\S]*?;$/gm, '')
@@ -512,8 +512,17 @@ test('sending to an agent asks for a prompt, then sends the path and not the fil
   const known = [CLAUDE];
   const h = await ready({ agents: [AGENT('t1')], known });
   const menu = await menuOf({ agents: [AGENT('t1')], sharedInit: { 'better-files.new-agents': [{ key: 'claude', name: 'Claude Code', run: ['claude'] }] } });
-  assert.match(labels(menu), /Send to Agent t1[\s\S]*Send to Agent t1 \(spawn\)[\s\S]*Send to new Claude Code/);
+  assert.doesNotMatch(labels(menu), /Send to Agent|Send to new/, 'one item, not one per agent');
+  assert.match(labels(menu), /Send to agent/);
+  click(menu, 'files-menu-send');
+  assert.equal(menu.closed.length, 0, 'the menu stays open for the list');
+  assert.match(labels(menu), /Back[\s\S]*Send to Agent t1[\s\S]*Send to Agent t1 \(spawn\)[\s\S]*Send to new Claude Code/);
+  assert.equal(find(menu.mod.render(), 'files-menu-send'), undefined);
+  click(menu, 'files-menu-back');
+  assert.match(labels(menu), /Send to agent/);
+  click(menu, 'files-menu-send');
   click(menu, 'files-menu-agent-t1');
+  assert.equal(menu.closed.length, 1);
   const asked = menu.store.get('better-files.compose');
   assert.equal(asked.address, 't1');
   h.store.set('better-files.compose', asked);
@@ -699,6 +708,66 @@ test('links open on the web, or open a file here in the viewer', async () => {
   assert.deepEqual(JSON.parse(JSON.stringify(args.props.file)), { path: '/repo/docs/next.md', root: '/repo', on: null });
   link('../../elsewhere/x.md', h.cx);
   assert.equal(viewers(h).find((e) => e.file.path === '/elsewhere/x.md').file.root, '/elsewhere', 'outside the root, its own folder');
+});
+
+test('no agent to send to: no Send to agent item', async () => {
+  assert.doesNotMatch(labels(await menuOf()), /Send to agent/);
+});
+
+test('Copy and Paste: paste only after a copy, only here, into the folder or the file\'s folder', async () => {
+  const fresh = await menuOf();
+  assert.match(labels(fresh), /Copy\b[\s\S]*Copy relative path/);
+  assert.doesNotMatch(labels(fresh), /Paste/);
+  click(fresh, 'files-menu-copy-file');
+  assert.deepEqual(JSON.parse(JSON.stringify(fresh.store.get('better-files.file-clipboard'))), { path: '/repo/b.md', dir: false });
+  const onFile = await menuOf({ sharedInit: { 'better-files.file-clipboard': { path: '/x/a.txt', dir: false } }, target: { ...FILE_TARGET, path: '/repo/src/main.go' } });
+  click(onFile, 'files-menu-paste-file');
+  await onFile.flush();
+  const call = onFile.execs.find(([b]) => b === 'sh');
+  assert.deepEqual([call[3], call[4], call[5]], ['paste', '/x/a.txt', '/repo/src'], 'a file pastes beside it');
+  const onDir = await menuOf({ sharedInit: { 'better-files.file-clipboard': { path: '/x/a.txt', dir: false } }, target: { ...FILE_TARGET, path: '/repo/src', dir: true } });
+  click(onDir, 'files-menu-paste-file');
+  await onDir.flush();
+  assert.equal(onDir.execs.find(([b]) => b === 'sh')[5], '/repo/src', 'a folder pastes inside it');
+  const far = await menuOf({ sharedInit: { 'better-files.file-clipboard': { path: '/x/a.txt', dir: false } }, target: { ...FILE_TARGET, on: 'box' } });
+  assert.doesNotMatch(labels(far), /Paste|Copy\b(?! (relative|full))/);
+});
+
+test('a folder can not be pasted into itself', async () => {
+  const h = await menuOf({ sharedInit: { 'better-files.file-clipboard': { path: '/repo/src', dir: true } }, target: { ...FILE_TARGET, path: '/repo/src/deep', dir: true } });
+  click(h, 'files-menu-paste-file');
+  await h.flush();
+  assert.equal(h.execs.filter(([b]) => b === 'sh').length, 0);
+  assert.match(h.store.get('better-files.error'), /inside itself/);
+});
+
+test('the paste script copies, never overwrites, and names clashes " copy"', async () => {
+  const { execFileSync } = require('node:child_process');
+  const os = require('node:os');
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'paste-'));
+  const src = path.join(tmp, 'src'), dst = path.join(tmp, 'dst');
+  fs.mkdirSync(path.join(src, 'dir/sub'), { recursive: true }); fs.mkdirSync(dst);
+  fs.writeFileSync(path.join(src, 'a.md'), 'A'); fs.writeFileSync(path.join(src, '.env'), 'E');
+  fs.writeFileSync(path.join(src, 'dir/sub/f.txt'), 'F'); fs.writeFileSync(path.join(src, 'dir/x.tar.gz'), 'X');
+  const h = world();
+  const paste = async (from, dir) => {
+    h.store.set('better-files.file-clipboard', { path: from, dir: fs.statSync(from).isDirectory() });
+    await h.mod.pasteFile({ path: dir, dir: true, on: null });
+    const call = h.execs.filter(([b]) => b === 'sh').at(-1);
+    execFileSync('sh', call.slice(1), { stdio: 'pipe' });
+  };
+  await paste(path.join(src, 'a.md'), dst);
+  fs.writeFileSync(path.join(dst, 'a.md'), 'KEEP');
+  await paste(path.join(src, 'a.md'), dst);
+  await paste(path.join(src, 'a.md'), dst);
+  await paste(path.join(src, '.env'), dst);
+  await paste(path.join(src, '.env'), dst);
+  await paste(path.join(src, 'dir'), dst);
+  await paste(path.join(src, 'dir'), dst);
+  assert.deepEqual(fs.readdirSync(dst).sort(), ['.env', '.env copy', 'a copy 2.md', 'a copy.md', 'a.md', 'dir', 'dir copy']);
+  assert.equal(fs.readFileSync(path.join(dst, 'a.md'), 'utf8'), 'KEEP', 'the original is untouched');
+  assert.equal(fs.readFileSync(path.join(dst, 'dir copy/sub/f.txt'), 'utf8'), 'F', 'folders go whole');
+  fs.rmSync(tmp, { recursive: true });
 });
 
 const typeFilter = async (h, text) => { h.mod.filter.set_value(text); await h.flush(); };

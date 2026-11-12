@@ -28,14 +28,15 @@ A file browser for [Herdr Desktop](https://herdr.dev/) that opens files in the c
 | **Open in default app** | Whatever macOS opens that file with. |
 | **Show in Finder** | Reveals it. |
 | **Show diff** | Opens a changed file's diff in [Better Changes](../better-changes/README.md), if you have it. |
+| **Copy**, **Paste** | **Copy** remembers a file or folder. **Paste** puts a copy in the folder you right-click, or beside the file you right-click. It shows only after a Copy. A name already taken becomes `name copy.ext`, then `name copy 2.ext`, so nothing is overwritten. Folders copy whole. |
 | **Copy relative path**, **Copy full path** | For pasting into a prompt. |
-| **Send to** an agent | Asks what it should do, then sends that with the path. Choose an agent that's running, **(spawn)** to start a sub-agent under it, or a new one in its own tab. Only **Send** delivers. |
+| **Send to agent** | Opens a list: an agent that's running, **(spawn)** to start a sub-agent under it, or a new one in its own tab. Then it asks what the agent should do, and sends that with the path. Only **Send** delivers. |
 
 The path goes to the agent and not the file's text, so it reads the file as it is by then.
 
-A space on another machine has no editor, default app or Finder items, because those apps are on this computer.
+A space on another machine has no editor, default app, Finder, Copy or Paste items, because those apps are on this computer.
 
-Editing, and creating, renaming or deleting files, aren't here on purpose: that's what your editor is for, and a file browser with a delete item is a way to lose work.
+Editing, renaming and deleting files aren't here on purpose: that's what your editor is for, and a file browser with a delete item is a way to lose work. Copy and Paste only add files and never overwrite one.
 
 ## Install
 

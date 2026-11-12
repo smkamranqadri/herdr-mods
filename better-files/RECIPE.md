@@ -1,6 +1,6 @@
 # Better Files
 
-A read-only file browser for a person's Herdr window, for directing agents rather than writing code by hand. Judge any addition by whether it helps someone see where an agent has been, read its work, or hand a file on. Editing and file operations stay out.
+A file browser, read-only except for copy and paste, for a person's Herdr window, for directing agents rather than writing code by hand. Judge any addition by whether it helps someone see where an agent has been, read its work, or hand a file on. Editing, renaming and deleting stay out; copy and paste only add files, never overwrite.
 
 ## What you see
 
@@ -12,7 +12,7 @@ A click opens the file in one shared centre tab per space, named after the file,
 
 Image files show fitted to the pane instead of the editor, through a copy in `mods/better-files/.cache/`, because `image()` only loads from under Herdr's folder. The folder is hidden because Herdr reloads a mod when any other file in its folder is saved, which would throw the tree away; and since Herdr doesn't see a hidden file change either, and keeps what it loaded under a name, a name never gets other bytes: it's the picture's `cksum` checksum and size, so a changed picture, or a tab that comes back after a reload, gets a copy of its own. The copy it replaces goes once the new one is in, and a picture that changes mid-copy is tried again on the next check. A Markdown picture keeps its last copy on screen until the new one is there, since a name drawn before its file exists would stay blank. A space on another machine says it can't show them. The centre tab has one title row, the same as a Better Changes diff: file, folder and Preview while it's the shared one. It publishes that to `shared("pane-heads")`, which Better Changes' pane header shows, and draws its own 30px row only under another header. A Markdown file opens rendered, with Preview and Code beside Keep tab to switch to the file view; the choice is kept per tab, and `settings.markdown` sets the first one. Keep tab and Open in float over the file's top right corner, or sit in that row. Below is the file, read-only, in the code font at the terminals' size.
 
-Right-click opens a popup at the pointer with groups separated by rules: Open and Open in new tab (files); Open in each editor, Open in default app (files) and Show in Finder (this computer only); Show diff (a changed file, with Better Changes installed); Copy relative path and Copy full path; Send to each agent in the space, each also as `<name> (spawn)`, and to a new one of each installed kind.
+Right-click opens a popup at the pointer with groups separated by rules: Open and Open in new tab (files); Open in each editor, Open in default app (files) and Show in Finder (this computer only); Show diff (a changed file, with Better Changes installed); Copy and Paste (this computer only; Paste only after a Copy, into the folder or beside the file, never overwriting: a taken name gets ` copy`, then ` copy 2`); Copy relative path and Copy full path; one Send to agent item, which swaps the popup for a list of each agent in the space, each also as `<name> (spawn)`, and a new one of each installed kind, with a Back item.
 
 Choosing an agent opens a box docked at the bottom of the panel with who it goes to, the path, and a prompt that's required. Only Send delivers.
 
@@ -59,4 +59,4 @@ Herdr's shipped layouts are read-only, so the sidebar only shows in a layout the
 - A click reuses one centre tab, a double-click keeps it, and the next click opens another.
 - An open file updates when it changes on disk, without losing your place when it hasn't.
 - A Markdown file opens rendered, Preview and Code switch it per tab, and its links and pictures work.
-- Right-click offers only what applies, and Send to an agent delivers the path.
+- Right-click offers only what applies, and Send to agent opens the list of agents and delivers the path.
