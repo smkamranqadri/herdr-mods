@@ -6,7 +6,7 @@ const path = require('node:path');
 const vm = require('node:vm');
 
 const root = path.join(__dirname, '../mods/better-files');
-const FILES = ['settings.js', 'files/model.js', 'files/file-icons.js', 'files/filter.js', 'views/ui.js', 'files/shell.js', 'files/reads.js', 'actions/open.js', 'actions/outside.js', 'actions/agents.js', 'actions/menus.js', 'views/tree.js', 'views/filter.js', 'views/tools.js', 'views/keys.js', 'views/viewer.js', 'views/context-menu.js', 'main.js'];
+const FILES = ['settings.js', 'files/model.js', 'files/file-icons.js', 'files/filter.js', 'views/ui.js', 'files/shell/posix.js', 'files/shell/macos.js', 'files/shell/windows.js', 'files/shell/linux.js', 'files/shell.js', 'files/reads.js', 'actions/open.js', 'actions/outside.js', 'actions/agents.js', 'actions/menus.js', 'views/tree.js', 'views/filter.js', 'views/tools.js', 'views/keys.js', 'views/viewer.js', 'views/context-menu.js', 'main.js'];
 // syntax.js keeps a scope of its own, as a module does: its languageOf isn't model.js's.
 const lexer = fs.readFileSync(path.join(root, 'syntax.js'), 'utf8').replace(/^export /gm, '');
 const source = `const { highlightLines, tokenizeLine, syntaxColors, languageOf: lexerLanguage, WHOLE_FILE_LINES, fenceLanguage } = (() => {\n${lexer}\nreturn { highlightLines, tokenizeLine, syntaxColors, languageOf, WHOLE_FILE_LINES, fenceLanguage };\n})();\n`
@@ -15,7 +15,7 @@ const source = `const { highlightLines, tokenizeLine, syntaxColors, languageOf: 
     .replace(/^import\s+[\s\S]*?;$/gm, '')
     .replace(/^export default (\w+);$/m, 'globalThis.Mod = $1;')
     .replace(/^export /gm, '')
-  + '\nObject.assign(globalThis, { parseStatus, markKey, holdsChange, parseHunks, buildRows, highlightLines, tokenizeLine, lexerLanguage, viewable, languageOf, sortEntries, markdownBlocks, resolvePath, isMarkdown, MAX_CHARS, indexOf, findMatches, matchRows, foldersTo, MAX_INDEXED, MAX_MATCHES, COPY_IMAGE, PER_FOLDER, expandTabs, fileLinesOf });';
+  + '\nObject.assign(globalThis, { parseStatus, markKey, holdsChange, parseHunks, buildRows, highlightLines, tokenizeLine, lexerLanguage, viewable, languageOf, sortEntries, markdownBlocks, frontMatter, resolvePath, isMarkdown, MAX_CHARS, indexOf, findMatches, matchRows, foldersTo, MAX_INDEXED, MAX_MATCHES, COPY_IMAGE, PER_FOLDER, expandTabs, fileLinesOf });';
 
 const TREE = { '/repo': [['d', 'src'], ['f', 'b.md'], ['f', 'a.md']], '/repo/src': [['f', 'main.go']] };
 
@@ -95,7 +95,7 @@ function world({ pictures = {}, spaceFolder = '/repo', focusOn = null, storage =
     },
     openOverlay: (spec) => { overlays.push(JSON.parse(JSON.stringify(spec))); return 'ov1'; }, closeOverlay: (id) => closed.push(id),
     layout: () => live.layout, appHome: () => '/app', nextCommand: () => new Promise((resolve) => waiting.push(resolve)), watchFolder: (...args) => { watchCalls.push(args); return watchOverride ? watchOverride(...args) : new Promise(() => {}); },
-    readTextFile: async (p, options) => { if (p.endsWith('better-changes/mod.json')) return '{}'; if (p.endsWith('better-files/mod.json')) return null; if (readOverride) return readOverride(p, options); if (live.texts[p] instanceof Error) throw live.texts[p]; return live.texts[p] ?? null; },
+    readTextFile: async (p, options) => { if (p.endsWith('better-changes/mod.json')) return '{}'; if (p.endsWith('better-files/mod.json')) return live.texts[p] ?? null; if (readOverride) return readOverride(p, options); if (live.texts[p] instanceof Error) throw live.texts[p]; return live.texts[p] ?? null; },
     knownAgents: async () => known,
     hc: async (args) => { sent.push(args); return hcResult ?? { code: 0, stdout: '', stderr: '' }; },
     exec: async (bin, args, options) => {
@@ -129,6 +129,13 @@ function world({ pictures = {}, spaceFolder = '/repo', focusOn = null, storage =
 const ready = async (o) => { const h = world(o); await h.flush(); return h; };
 const find = (node, id) => (node?.elementId === id ? node : node?.nodes?.map((n) => find(n, id)).find(Boolean));
 const strings = (node) => (typeof node === 'string' ? node : (node?.nodes ?? []).map(strings).join(' '));
+const color = (h) => {
+  h.mod.render();
+  h.tick();
+  let steps = 0;
+  for (let at; (at = h.later.findIndex(([ms]) => ms === 16)) >= 0; steps++) h.later.splice(at, 1)[0][1](h.cx);
+  return steps;
+};
 const click = (h, id, event = { click_count: 1 }) => { const node = find(h.mod.render(), id); assert.ok(node, `no ${id}`); assert.ok(node.handlers.click, `${id} isn't clickable`); node.handlers.click(event, h.cx); };
 const tabs = (h) => h.ran.filter(([n]) => n === 'tab.new');
 const viewers = (h) => Object.values(h.store.get('better-files.viewers') ?? {});
@@ -787,10 +794,41 @@ test('the row view colours a file from the top, so a comment carries to the next
   const file = { path: '/repo/x.ts', root: '/repo', on: null };
   const h = await ready({ mode: 'viewer', viewer: 'v', file, texts: { '/repo/x.ts': '/* note\nstill note */ const A = 1' } });
   const colorOf = (node, text) => (node?.nodes?.includes(text) ? node.colors.at(-1) : node?.nodes?.map((n) => colorOf(n, text)).find(Boolean));
+  color(h);
   const row = find(h.mod.render(), 'viewer-line-1');
   assert.ok(row, 'the second row is drawn');
   assert.equal(colorOf(row, 'still note */'), '#dim', 'still a comment');
   assert.equal(colorOf(row, 'const'), '#ansi5');
+});
+
+test('render never colours a whole file: steps on the timer do, and a stale one is dropped', async () => {
+  const file = { path: '/repo/x.ts', root: '/repo', on: null };
+  const text = ['/* open', ...Array.from({ length: 119 }, (_, i) => `still ${i} ${'x'.repeat(60)}`), 'done */ const A = 1'].join('\n');
+  const h = await ready({ mode: 'viewer', viewer: 'v', file, texts: { '/repo/x.ts': text } });
+  const lines = h.mod.fileLines();
+  assert.equal(h.mod.lineRuns(lines), null, 'the first draw has no whole-file runs');
+  const steps = color(h);
+  assert.equal(steps, 2, 'about 8,400 characters take three steps of 4,000, two of them a tick later');
+  const runs = h.mod.lineRuns(lines);
+  assert.equal(runs.length, 121);
+  assert.deepEqual(JSON.parse(JSON.stringify(runs.at(-1).filter((r) => r.kind).map((r) => [r.text, r.kind]))), [['done */', 'comment'], ['const', 'keyword'], ['1', 'number']], 'state carries across steps');
+
+  h.mod.text = `${text}\nmore`;
+  const next = h.mod.fileLines();
+  h.mod.lineRuns(next);
+  h.mod.colorStep(h.cx);
+  h.mod.text = `${text}\nother`;
+  h.mod.lineRuns(h.mod.fileLines());
+  color(h);
+  assert.equal(h.mod.colorJobs.length, 0, 'nothing left queued');
+  assert.equal(h.mod.lineRuns(next), null, 'a version left half-coloured never gets runs');
+});
+
+test("a line longer than a step's budget gets a step to itself", async () => {
+  const file = { path: '/repo/x.ts', root: '/repo', on: null };
+  const h = await ready({ mode: 'viewer', viewer: 'v', file, texts: { '/repo/x.ts': `${'x'.repeat(4500)}\nconst B = 2` } });
+  assert.equal(color(h), 1, 'the long line takes one step, the next line the one after');
+  assert.equal(h.mod.lineRuns(h.mod.fileLines()).length, 2);
 });
 
 test('binary, large and unreadable files say what is going on', async () => {
@@ -943,6 +981,30 @@ test('the folder icon opens the whole folder in an editor or Finder, here only',
   assert.deepEqual(JSON.parse(JSON.stringify(h.execs.filter(([b]) => b === 'open'))), [['open', '-b', 'dev.zed.Zed', '/repo'], ['open', '/repo']]);
   const far = await ready({ machine: 'box', sharedInit: { 'better-files.editors': zed } });
   assert.equal(find(far.mod.render(), 'files-folder'), undefined);
+});
+
+test('a file manager of your own (settings.fileManager) takes Show in and the folder menu, named by its name', async () => {
+  const own = { name: 'Yazi', command: ['open-files', '--here'] };
+  const sidebar = await ready({ texts: { '/app/mods/better-files/mod.json': JSON.stringify({ settings: { fileManager: own } }) } });
+  assert.deepEqual(JSON.parse(JSON.stringify(sidebar.store.get('better-files.file-manager'))), own, 'the sidebar shares it for the menu');
+  find(sidebar.mod.render(), 'files-folder').handlers.open(true, sidebar.cx);
+  assert.match(strings(find(sidebar.mod.render(), 'files-folder-menu')), /Open in Yazi/);
+  click(sidebar, 'files-folder-option-finder');
+  const menu = await menuOf({ sharedInit: { 'better-files.file-manager': own } });
+  assert.match(labels(menu), /Open in default app[\s\S]*Show in Yazi/);
+  click(menu, 'files-menu-reveal');
+  await sidebar.flush();
+  await menu.flush();
+  assert.deepEqual(JSON.parse(JSON.stringify([...sidebar.execs, ...menu.execs].filter(([b]) => b === 'open-files'))), [['open-files', '--here', '/repo'], ['open-files', '--here', '/repo/b.md']]);
+  // unnamed, it is the file manager; a command with an empty part, or none, leaves the platform's own
+  const unnamed = await menuOf({ sharedInit: { 'better-files.file-manager': { name: '', command: ['open-files'] } } });
+  assert.match(labels(unnamed), /Show in file manager/);
+  for (const fileManager of [{ name: 'X', command: ['open-files', ''] }, { name: 'X', command: [] }, { name: 'X', command: 'open-files' }]) {
+    const h = await ready({ texts: { '/app/mods/better-files/mod.json': JSON.stringify({ settings: { fileManager } }) } });
+    assert.equal(h.store.get('better-files.file-manager'), null);
+  }
+  const plain = await menuOf({ sharedInit: { 'better-files.file-manager': null } });
+  assert.match(labels(plain), /Show in Finder/);
 });
 
 test('only editors that are installed are found', async () => {
@@ -1225,6 +1287,18 @@ test('Markdown splits at headings, gives code its own blocks, and pulls out line
   assert.equal(blocks('# snake_case option')[0].anchor, 'snake_case-option');
   assert.deepEqual(blocks(''), []);
   assert.deepEqual(blocks('\n\n  \n'), []);
+
+  assert.deepEqual(blocks('---\nname: OmaRelay\ncolors:\n  ink: "#fff"\n---\n\n# Design\nText'), [
+    { type: 'code', lang: 'yaml', text: 'name: OmaRelay\ncolors:\n  ink: "#fff"' },
+    { type: 'text', text: '# Design\nText', anchor: 'design' },
+  ], 'front matter is a YAML code block, not a rule and one long heading');
+  assert.deepEqual(blocks('\uFEFF---\r\n# a comment\r\ntitle: x\r\n...\r\nBody'), [
+    { type: 'code', lang: 'yaml', text: '# a comment\ntitle: x' },
+    { type: 'text', text: 'Body' },
+  ], 'after a byte-order mark, with CRLF, closed by ...');
+  assert.deepEqual(blocks('---\n---\nBody'), [{ type: 'code', lang: 'yaml', text: '' }, { type: 'text', text: 'Body' }], 'empty front matter');
+  for (const stays of ['---\nJust prose here.\n---', 'Intro\n---\nkey: v\n---', '---\nkey: v', ' ---\nkey: v\n---'])
+    assert.ok(blocks(stays).every((b) => b.type === 'text'), `not front matter: ${JSON.stringify(stays)}`);
 });
 
 test('malformed Markdown never throws', async () => {
@@ -1242,6 +1316,31 @@ test('malformed Markdown never throws', async () => {
 
 const MD = { path: '/repo/docs/guide.md', root: '/repo', on: null };
 const mdWorld = (o = {}) => ready({ mode: 'viewer', viewer: 'v', file: MD, texts: { '/repo/docs/guide.md': '# Guide\n\nSee [next](next.md).\n\n![Shot](pics/shot.PNG)\n\nEnd' }, ...o });
+test('Windows Markdown previews fetch badges and copy relative images without sh', async () => {
+  const badge = "https://img.shields.io/badge/it's-blue?style=flat&logo=node.js";
+  const h = await mdWorld({
+    platform: 'windows',
+    texts: { '/repo/docs/guide.md': `![Badge](${badge})\n\n![Local](pics/shot.png)\n\n![Blocked](ftp://example.com/blocked.png)` },
+    execOverride: (bin, args) => {
+      if (bin === 'sh') throw new Error('sh not installed');
+      if (bin !== 'powershell.exe') return undefined;
+      if (args[3].includes('curl.exe')) {
+        const base = decodeURIComponent(args[3].match(/\} '[^']+' '([^']+)'$/)?.[1] ?? '');
+        return base ? { code: 0, stdout: `${base}.svg` } : { code: 1, stdout: '' };
+      }
+      if (args[3].includes('Get-FileHash')) return { code: 0, stdout: 'v-m1-111-3.png' };
+      return undefined;
+    },
+  });
+  assert.ok(!h.execs.some(([bin]) => bin === 'sh'));
+  const commands = h.execs.filter(([bin]) => bin === 'powershell.exe').map((e) => e[4]);
+  assert.equal(commands.filter((s) => s.includes('curl.exe')).length, 1, 'only the https picture is fetched');
+  assert.ok(commands.some((s) => s.includes("'/repo/docs/pics/shot.png'")));
+  const preview = strings(find(h.mod.render(), 'viewer-preview'));
+  assert.match(preview, /image:mods\/better-files\/\.cache\/web-[0-9a-f]+\.svg/);
+  assert.match(preview, /image:mods\/better-files\/\.cache\/v-m1-111-3\.png/);
+});
+
 
 test('a Markdown file opens in Preview; the toggle switches to Code and back, remembered per tab', async () => {
   const h = await mdWorld();
@@ -1311,6 +1410,8 @@ test('the preview draws code blocks, rows of badges from the web, and jumps to a
   const render = () => h.mod.render();
   const colorOf = (node, s) => (node?.nodes?.includes(s) ? node.colors.at(-1) : node?.nodes?.map((n) => colorOf(n, s)).find(Boolean));
 
+  assert.equal(colorOf(find(render(), 'viewer-code-3'), 'pnpm dev # start'), '#foreground', 'one plain run until its colours are in');
+  color(h);
   const code = find(render(), 'viewer-code-3');
   assert.ok(code, 'the fence is a code block');
   assert.match(strings(code), /sh/, 'its language at the top');
@@ -1858,7 +1959,11 @@ test('the row view recolours when another file has the same text', async () => {
   const file = { path: '/repo/a.py', root: '/repo', on: null };
   const h = await ready({ mode: 'viewer', viewer: 'v', file, texts: { '/repo/a.py': 'def f(): pass' } });
   const lines = ['let x = 1'];
-  const kinds = () => JSON.parse(JSON.stringify(h.mod.lineRuns(lines)[0].filter((r) => r.kind).map((r) => r.kind)));
+  const kinds = () => {
+    h.mod.lineRuns(lines);
+    h.mod.colorStep(h.cx);
+    return JSON.parse(JSON.stringify(h.mod.lineRuns(lines)[0].filter((r) => r.kind).map((r) => r.kind)));
+  };
   assert.deepEqual(kinds(), ['number'], 'let is not a Python keyword');
   h.mod.file = { ...file, path: '/repo/a.js' };
   assert.deepEqual(kinds(), ['keyword', 'number'], 'the same lines, coloured as JavaScript');

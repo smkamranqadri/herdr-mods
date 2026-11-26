@@ -1,6 +1,6 @@
 # Herdr Mods
 
-Mods for [Herdr Desktop](https://herdr.dev/) built on Herdr's own mod API: a Git panel, a file browser, a sidebar, a tab bar, a settings dialog, and PR and Linear panels. Install one, or all of them as the [Estro](#estro-all-of-them-in-one-layout) layout.
+Mods for [Herdr Desktop](https://herdr.dev/) built on Herdr's own mod API: a Git panel, a file browser, a sidebar, a tab bar, a settings dialog, and PR and issue panels. Install one, or all of them as the [Estro](#estro-all-of-them-in-one-layout) layout.
 
 ![Better Sidebar, Better Tabs, Better Files, Better Changes and Better Config together in Herdr](docs/gifs/better-mods.gif)
 
@@ -31,7 +31,7 @@ Full docs for each (install, use, settings, update, developer use) are on the [s
 
 ### The Better mods
 
-Git, files, spaces, tabs, settings, icons and alerts.
+Git, files, spaces, tabs, settings, icons, alerts and search.
 
 - [Better Changes](better-changes/README.md) (`better-changes`): Git panel with staged, unstaged and unpushed files, stage and unstage, commit and amend, history, and an inline or side-by-side diff tab.
 - [Better Files](better-files/README.md) (`better-files`): read-only file browser that opens files in the centre pane, with a filter that finds any file, Markdown rendered, Git marks, Open in your editor, and a menu that hands a file to an agent.
@@ -39,18 +39,19 @@ Git, files, spaces, tabs, settings, icons and alerts.
 - [Better Tabs](better-tabs/README.md) (`better-tabs`): tabs you drag that wrap onto more lines and name themselves after what runs in them, a toolbar for panels, and a ⋮ menu to hide and pin them.
 - [Better Config](better-config/README.md) (`better-config`): every installed mod's settings in one dialog drawn like Herdr's Settings, and a list of the mods you have; it writes only what you changed and offers to restore your changes after an update resets them.
 - [Better Icons](better-icons/README.md) (`better-icons`): VS Code's Material Icon Theme for the other mods. With it installed, Better Files, Better Changes and Branch PR show a colour icon for every file and folder; without it, mods keep their plain icons.
-- [Better Alerts](better-alerts/README.md) (`better-alerts`): system notifications on Linux when an agent needs you or finishes while you're looking elsewhere; click one to open that agent. Needs `notify-send`.
+- [Better Alerts](better-alerts/README.md) (`better-alerts`): system notifications on macOS and Linux when an agent needs you or finishes while you're looking elsewhere, with its question or reply; click one to open that agent. Needs Xcode's Command Line Tools on macOS, `notify-send` on Linux.
+- [Better Search](better-search/README.md) (`better-search`): one popup that finds any tab on any machine, agent, space, file, Herdr command, pull request, issue or line an agent printed, with `@ > / ~ ? # $` to narrow it, peek, and a message or a file sent straight to an agent.
 
 ### Branch panels
 
-Your PR and your Linear issue, next to the branch.
+Your PR and your issues, next to the branch.
 
 - [Branch PR](branch-pr/README.md) (`branch-pr`): GitHub PR panel that shows what stands between a PR and a merge, lists its files with diffs, hands failures and comments to agents, and merges when ready. Needs Go 1.23+ and `gh`.
-- [Branch Issue](branch-issue/README.md) (`branch-issue`): Linear panel that follows the branch, edits state, priority and assignee, and opens a worktree with an agent holding the issue. Needs Go 1.23+ and a Linear API key.
+- [Branch Issue](branch-issue/README.md) (`branch-issue`): follows the branch in Linear (including edits and worktrees) or shows read-only GitHub Issues. Needs Go 1.23+ to install, plus a Linear API key or authenticated `gh`.
 
 ## Estro: all of them in one layout
 
-[Estro](estro/RECIPE.md) puts every mod in one window for directing agents: spaces and agents on the left, the session in the middle, and Files, Changes, PRs and Issues in a panel on the right. One prompt installs the layout and all seven mods:
+[Estro](estro/RECIPE.md) puts every mod in one window for directing agents: spaces and agents on the left, the session in the middle, and Files, Changes, PRs and Issues in a panel on the right. One prompt installs the layout and all eight mods:
 
 ```text
 Read ~/.config/herdr-app/AGENTS.md, then add this layout: https://github.com/munza/herdr-mods/tree/main/estro
@@ -87,12 +88,11 @@ my-mod/
 
 ## Test
 
-```sh
-node --test */tests/*.test.cjs
-for d in */helper; do (cd "$d" && go test ./... && go vet ./...); done
-```
+The mods run on Herdr's JavaScript runtime; Node.js is only for the tests and the site. [CONTRIBUTING.md](CONTRIBUTING.md#test) has the commands. `node site/build.cjs` builds the site into `_site/`, generating each mod's docs page and home-page card from its README; [site/README.md](site/README.md) says how a README is laid out for that. Each README lists what its mod calls at runtime (Git, `gh`, `hc`, Claude Code, macOS permissions).
 
-The mods run on Herdr's JavaScript runtime; Node.js is only for the tests and the site. `node site/build.cjs` builds the site into `_site/`, generating each mod's docs page and home-page card from its README; [site/README.md](site/README.md) says how a README is laid out for that. Each README lists what its mod calls at runtime (Git, `gh`, `hc`, Claude Code, macOS permissions).
+## Contributing
+
+Bug reports, fixes, platform support and new mods are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) first, and the [Code of Conduct](CODE_OF_CONDUCT.md). Report a vulnerability privately, as [SECURITY.md](SECURITY.md) says.
 
 ## License
 

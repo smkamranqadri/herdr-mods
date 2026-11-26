@@ -5,7 +5,7 @@ const path = require('node:path');
 const root = path.resolve(__dirname, '..');
 const runtime = path.join(root, 'mods/branch-issue');
 
-const files = () => ['main.js', 'settings.js', ...['views', 'actions', 'linear', 'state'].flatMap((d) => fs.readdirSync(path.join(runtime, d)).map((f) => `${d}/${f}`))];
+const files = () => ['main.js', 'settings.js', ...['views', 'actions', 'linear', 'github', 'state'].flatMap((d) => fs.readdirSync(path.join(runtime, d)).map((f) => `${d}/${f}`))];
 
 test('package owns its helper and has no custom-mod or layout dependency', () => {
   const code = files().map((f) => fs.readFileSync(path.join(runtime, f), 'utf8')).join('\n');

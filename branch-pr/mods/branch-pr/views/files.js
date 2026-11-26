@@ -15,7 +15,7 @@ export const filesMethods = {
   loadFiles(cx) {
     const pr = this.pr;
     if (!pr) return;
-    const key = `${pr.repository}#${pr.number}@${pr.headRefOid}`;
+    const key = this.filesKey(pr);
     if (this.prFiles?.key === key && !this.prFiles.error) return;
     this.prFiles = { key, loading: true };
     cx.spawn(async (cx) => {
@@ -31,10 +31,16 @@ export const filesMethods = {
     });
   },
 
+  filesKey(pr) {
+    return `${pr.repository}#${pr.number}@${pr.headRefOid}`;
+  },
+
   filesView(body) {
     const t = theme();
     const files = this.prFiles;
-    if (!files || files.loading) return body.child(Message("Loading files…"));
+    // Another PR's files, left from a space this one came back from, wait for this PR's.
+    if (!files || files.loading || files.key !== this.filesKey(this.pr))
+      return body.child(Message("Loading files…"));
     if (files.error) return body.child(Message(files.error, true));
     if (!files.list.length) return body.child(Message("No files changed."));
     const tree = this.fileLayout === "tree";

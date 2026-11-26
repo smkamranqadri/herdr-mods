@@ -5,7 +5,7 @@
 // kept in ~/.config/herdr-mods/better-config/, outside every mod, so values an
 // update wiped can be put back.
 import { View, div, svg } from "gpui-kit";
-import { v_flex, h_flex, Scrollbar, InputState, Input, Select, Popup, Checkbox } from "gpui-base";
+import { v_flex, h_flex, Scrollbar, InputState, Input, EditorState, Editor, Select, Popup, Checkbox } from "gpui-base";
 import { appHome, home, exec, readTextFile, writeTextFile, theme, props, closeOverlay, run, window, layout } from "herdr";
 import {
   fieldsOf,
@@ -13,6 +13,7 @@ import {
   problemWith,
   parseInput,
   showValue,
+  boxValue,
   isChanged,
   changedValues,
   lostValues,
@@ -23,6 +24,7 @@ import {
   shippedMods,
   installedRows,
   filterInstalled,
+  rebind,
 } from "./model.js";
 import { pickListMods, pickMkdir } from "./shell.js";
 
@@ -32,6 +34,9 @@ const POLL_MS = 3000;
 const INSTALLED = "*installed";
 const USE = { layout: "In this layout", key: "Opens by key" };
 const INSTALLED_TABS = { yours: "Yours", herdr: "Herdr's" };
+
+// A JSON setting's editor is this tall (px) whatever it holds; longer JSON scrolls inside it.
+const JSON_HEIGHT = 200;
 
 export default class BetterConfig extends View {
   init(_props, cx) {
@@ -44,9 +49,10 @@ export default class BetterConfig extends View {
     this.installedSearch.on("change", (_e, cx) => cx.notify());
     this.loaded = false;
     this.section = null;
-    this.inputs = {}; // "mod:key" → { state, focused }
+    this.inputs = {}; // "mod:key" → { state, focused, shown }
     this.unticked = new Set();
-    this.notes = {}; // "mod:key" → why the typed value wasn't saved
+    this.notes = {}; // "mod:key" → a note on a save, such as keys.json not changing; "mod:*" for the whole mod
+    this.refused = {}; // "mod:key" → why the typed value wasn't saved
     this.handle = cx.focus_handle();
     this.handle.focus();
     this.menuFocus = cx.focus_handle();
@@ -174,6 +180,10 @@ export default class BetterConfig extends View {
           mod.manifest = JSON.parse(text);
           mod.fields = fieldsOf(mod.schema, mod.manifest.settings);
           await this.keep(mod);
+          for (const [key, value] of edits) {
+            const field = mod.fields.find((f) => f.key === key);
+            if (field?.type === "key") await this.bindKey(name, field, value ?? field.default);
+          }
           failed = null;
           break;
         } catch (e) {
@@ -188,9 +198,40 @@ export default class BetterConfig extends View {
     });
   }
 
+  // A key setting changes keys.json too: its action moves to the new key. What the key did
+  // before is kept in displaced-keys.json beside the copies, and comes back when the action moves off it.
+  async bindKey(name, field, key) {
+    const path = `${appHome()}/keys.json`;
+    const keptPath = `${this.keptFolder()}/displaced-keys.json`;
+    const note = `${name}:${field.key}`;
+    try {
+      const [raw, keptRaw] = await Promise.all([readTextFile(path), readTextFile(keptPath)]);
+      const next = rebind(JSON.parse(raw ?? "{}"), JSON.parse(keptRaw ?? "{}"), field.action, key);
+      await writeTextFile(path, `${JSON.stringify(next.keys, null, 2)}\n`, raw);
+      const kept = `${JSON.stringify(next.displaced, null, 2)}\n`;
+      if (kept !== (keptRaw ?? "{}\n")) {
+        if (keptRaw === null) {
+          const { program, args } = pickMkdir(this.keptFolder(), window()?.platform);
+          await exec(program, args);
+        }
+        await writeTextFile(keptPath, kept, keptRaw);
+      }
+      delete this.notes[note];
+    } catch (e) {
+      this.notes[note] = `Saved, but keys.json wasn't changed: ${e?.message ?? e}`;
+    }
+  }
+
   // Back to what the mod ships with: its described default, or nothing.
   reset(mod, field, cx) {
-    delete this.notes[`${mod.name}:${field.key}`];
+    const id = `${mod.name}:${field.key}`;
+    delete this.refused[id];
+    // Text that was refused goes too, even when the file has nothing to change.
+    const box = this.inputs[id];
+    if (box) {
+      box.shown = boxValue(field, undefined);
+      box.state.set_value(box.shown);
+    }
     this.change(mod.name, [[field.key, field.default]], cx);
   }
 
@@ -418,20 +459,35 @@ export default class BetterConfig extends View {
     const id = `${name}:${field.key}`;
     if (this.inputs[id]) return;
     const value = getPath(this.mods.find((m) => m.name === name)?.manifest?.settings, field.key);
-    const state = InputState.new({ placeholder: field.default === undefined ? "" : showValue(field.default) });
-    state.set_value(showValue(value));
-    const box = (this.inputs[id] = { state, focused: false, shown: showValue(value) });
-    // Saves on Enter or when the box loses focus.
+    const shown = boxValue(field, value);
+    // A JSON setting gets a multi-line editor with highlighting. Enter there is a new line,
+    // so it saves only when it loses focus.
+    const json = field.type === "json";
+    const t = theme();
+    const state = json
+      ? EditorState.new({
+          language: "json",
+          value: shown,
+          line_numbers: false,
+          folding: false,
+          soft_wrap: true,
+          // The colours of syntaxColors in Better Files and Better Changes; true and false are constants there.
+          syntax: { string: t.ansi2, number: t.ansi1, constant: t.ansi6, boolean: t.ansi6 },
+        })
+      : InputState.new({ placeholder: field.default === undefined ? "" : showValue(field.default) });
+    if (!json) state.set_value(shown);
+    const box = (this.inputs[id] = { state, focused: false, shown });
+    // Saves on Enter in a text box, or when either loses focus.
     const commit = (cx) => {
       const now = this.mods.find((m) => m.name === name);
       const f = now?.manifest && now.fields.find((x) => x.key === field.key);
       if (!f) return;
       const typed = state.value();
-      if (typed === showValue(getPath(now.manifest.settings, f.key))) return;
+      if (typed === boxValue(f, getPath(now.manifest.settings, f.key))) return;
       const parsed = parseInput(f, typed);
-      if (parsed.error) this.notes[id] = parsed.error;
+      if (parsed.error) this.refused[id] = parsed.error;
       else {
-        delete this.notes[id];
+        delete this.refused[id];
         this.change(name, [[f.key, parsed.value]], cx);
       }
       cx.notify();
@@ -447,28 +503,46 @@ export default class BetterConfig extends View {
     state.on("submit", (_e, cx) => commit(cx));
   }
 
+  // A box's text follows the file while the person isn't typing in it.
+  follow(id, box, field, value) {
+    const shown = boxValue(field, value);
+    if (box.focused || box.shown === shown) return;
+    box.state.set_value(shown);
+    box.shown = shown;
+    delete this.refused[id];
+  }
+
+  // The frame of a box typed in: red when what was typed was refused, accent while typing.
+  boxFrame(t, id, box) {
+    return div()
+      .rounded(7)
+      .border_1()
+      .border_color(this.refused[id] ? t.ansi1 : box.focused ? t.accent : t.border)
+      .bg(t.background);
+  }
+
   textBox(t, mod, field, value) {
     const id = `${mod.name}:${field.key}`;
     const box = this.inputs[id];
     if (!box) return div().text_size(13).text_color(t.dim).child(showValue(value));
-    // Follow the file while the person isn't typing in it.
-    if (!box.focused && box.shown !== showValue(value)) {
-      box.state.set_value(showValue(value));
-      box.shown = showValue(value);
-      delete this.notes[id];
-    }
-    return div()
+    this.follow(id, box, field, value);
+    return this.boxFrame(t, id, box)
       .w(field.type === "text" || field.type === "list" ? 240 : 120)
       .h(28)
       .px(8)
       .flex()
       .items_center()
-      .rounded(7)
-      .border_1()
-      .border_color(this.notes[id] ? t.ansi1 : box.focused ? t.accent : t.border)
-      .bg(t.background)
       .text_size(13)
       .child(Input.new(box.state).h(26).w_full().text_color(t.foreground));
+  }
+
+  // A JSON setting's editor, the full width of its row, under it.
+  jsonBox(t, mod, field, value) {
+    const id = `${mod.name}:${field.key}`;
+    const box = this.inputs[id];
+    if (!box) return div().text_size(13).text_color(t.dim).child(boxValue(field, value));
+    this.follow(id, box, field, value);
+    return this.boxFrame(t, id, box).w_full().h(JSON_HEIGHT).p(6).child(Editor.new(box.state).size_full());
   }
 
   control(t, mod, field, value) {
@@ -488,22 +562,24 @@ export default class BetterConfig extends View {
         .child(this.stepper(t, id, shown, field.step, (by, cx) => set(clamp(shown + by), cx)))
         .when(Boolean(field.unit), (el) => el.child(div().text_size(12.5).text_color(t.dim).child(field.unit)));
     }
+    if (field.type === "json") return this.jsonBox(t, mod, field, value);
     return this.textBox(t, mod, field, value);
   }
 
   // One setting: what it is on the left, the control on the right, any problem under it.
+  // A JSON setting's editor goes under it instead, the row's full width.
   row(t, mod, field) {
     const value = getPath(mod.manifest.settings, field.key);
-    const problem = this.notes[`${mod.name}:${field.key}`] ?? problemWith(field, value);
+    const id = `${mod.name}:${field.key}`;
+    const refused = this.refused[id];
+    const problem = refused ?? this.notes[id] ?? problemWith(field, value);
     const changed = isChanged(field, value);
     const about = field.description;
-    return h_flex()
+    const json = field.type === "json";
+    const header = h_flex()
       .w_full()
       .gap(16)
-      .py(12)
       .items_center()
-      .border_b(1)
-      .border_color(t.border)
       .child(
         v_flex()
           .flex_1()
@@ -522,7 +598,8 @@ export default class BetterConfig extends View {
           .child(div().text_size(11.5).text_color(t.dim).font_family("JetBrains Mono").child(field.key))
           .when(Boolean(problem), (el) => el.child(div().text_size(12.5).text_color(t.ansi1).child(problem))),
       )
-      .when(changed, (el) =>
+      // Reset also takes back typed text that was refused, which the file never got.
+      .when(changed || Boolean(refused), (el) =>
         el.child(
           div()
             .id(`bc-reset-${mod.name}-${field.key}`)
@@ -534,12 +611,21 @@ export default class BetterConfig extends View {
             .text_color(t.dim)
             .cursor_pointer()
             .hover((s) => s.bg(t.hover).text_color(t.foreground))
-            .tooltip(`Back to ${showValue(field.default) || "the default"}`)
+            // A JSON default is many lines, too long for a tooltip.
+            .tooltip(json ? "Back to the default" : `Back to ${showValue(field.default) || "the default"}`)
             .on_click((_e, cx) => this.reset(mod, field, cx))
             .child("Reset"),
         ),
       )
-      .child(div().flex_none().child(this.control(t, mod, field, value)));
+      .when(!json, (el) => el.child(div().flex_none().child(this.control(t, mod, field, value))));
+    return v_flex()
+      .w_full()
+      .gap(10)
+      .py(12)
+      .border_b(1)
+      .border_color(t.border)
+      .child(header)
+      .when(json, (el) => el.child(this.control(t, mod, field, value)));
   }
 
   // When an update put the shipped values back over the person's own.

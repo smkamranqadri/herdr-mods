@@ -13,7 +13,7 @@
 // github/model.js says what GitHub's answers mean; views/ui.js holds every look.
 import { View } from "gpui-kit";
 import { InputState, TextareaState } from "gpui-base";
-import { spaces, panes, nextCommand, layout, readTextFile, appHome } from "herdr";
+import { spaces, panes, nextCommand, layout, readTextFile, appHome, shared } from "herdr";
 import { loadSettings, duration } from "./settings.js";
 import { followFileIcons } from "./file-icons.js";
 import { savedMethods } from "./state/saved.js";
@@ -36,6 +36,9 @@ const CONTEXT_POLL_MS = 1000;
 const REFRESH_INTERVAL_MS = 60000;
 const FIRST_LOAD_LIMIT_MS = 30000;
 const NOTICE_MS = 5000;
+// Better Search asks for one by shared `branch-pr.open`, { space, number, repo, at }; older asks are let go.
+const ASK_MS = 10000;
+const ASK_POLL_MS = 100;
 // Preferences a person may change in the installed mod.json under `settings`.
 const DEFAULT_SETTINGS = {
   refresh: { every: "60s", search_debounce: "450ms" },
@@ -76,11 +79,13 @@ class PullRequests extends View {
     this.items = [];
     this.cursors = {};
     this.cache = {};
+    this.snapshots = new Map();
     this.listToken = 0;
     this.detailToken = 0;
     this.repoToken = 0;
     this.branchToken = 0;
     this.searchToken = 0;
+    this.settleToken = 0;
 
     this.menuFocus = cx.focus_handle();
     this.remoteTrigger = cx.focus_handle();
@@ -155,7 +160,35 @@ class PullRequests extends View {
     });
   }
 
+  // Better Search's ask, looked for often so the panel turns to it at once.
+  takeAsk(cx) {
+    const ask = shared("branch-pr.open");
+    if (!ask || ask.at <= (this.askedAt ?? 0)) return;
+    // Follow the space first, as the slower look does, so it can't cancel this load after.
+    const sp = activeSpace();
+    const key = spaceContextKey(sp);
+    if (key !== this.spaceKey) this.changeSpace(sp, key, cx);
+    // A write in progress finishes first; the ask waits for the next look.
+    if (ask?.number && ask.space === sp?.id && ask.at > (this.askedAt ?? 0) && Date.now() - ask.at < ASK_MS && !this.mutating) {
+      this.askedAt = ask.at;
+      // What was open last time mustn't replace what was asked for when the list loads.
+      this.reopenSaved = false;
+      this.restoreSelection = null;
+      // As a click in the list does: what was open goes, and "Loading #N…" shows until it's here.
+      if (this.pr) this.leavePR();
+      this.pr = null;
+      this.composer = null;
+      this.jobs = {};
+      this.logs = {};
+      this.notice = null;
+      this.opening = { number: ask.number };
+      this.openPR(ask.number, cx, ask.repo || this.repo);
+      cx.notify();
+    }
+  }
+
   startPolling(cx) {
+    cx.timer.every(ASK_POLL_MS, (cx) => this.takeAsk(cx));
     cx.timer.every(CONTEXT_POLL_MS, (cx) => {
       // A read that never answers mustn't leave the tabs locked; the helper itself
       // gives up after 26 seconds.
@@ -184,7 +217,8 @@ class PullRequests extends View {
         Date.now() - (this.refreshed ?? 0) >
         duration(this.settings.refresh.every, REFRESH_INTERVAL_MS);
       // Coming back to a hidden panel makes it due at once, if it's been a while.
-      if (!this.busy && !this.mutating && due && panelShown(layout(), "branch-pr"))
+      // A space still settling starts its own reads.
+      if (!this.busy && !this.mutating && !this.settling && due && panelShown(layout(), "branch-pr"))
         this.refresh(cx);
     });
   }

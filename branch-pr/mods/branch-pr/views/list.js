@@ -250,7 +250,8 @@ export const listMethods = {
   },
 
   branchList(t) {
-    if (!this.branchPRs.length && this.branchLoading) return Busy("Loading this branch's PRs…");
+    if (!this.branchPRs.length && !this.branchKnown && (this.branchLoading || this.settling || !this.branchLoaded))
+      return Busy("Loading this branch's PRs…");
     const list = v_flex().id("pr-branch-list").flex_1().min_h(0).overflow_y_scrollbar().p(6).gap(2);
     if (!this.branchPRs.length)
       list.child(

@@ -1,14 +1,14 @@
 # Branch Issue
 
-A Linear panel for Herdr Desktop that shows the issues for the branch you're on: see where an issue stands and change its state, priority and assignee, read and post comments, and give it its own worktree that opens with an agent holding the issue. A sibling of Branch PR.
+A Herdr Desktop sidebar for issues. Use Linear to edit issues, comment, or start a worktree with an agent holding the issue. Use GitHub Issues to browse open issues and follow links to GitHub. A sibling of Branch PR.
 
 ![Branch Issue](preview.png)
 
 ## Quick start
 
-1. Create a Linear personal API key, export it as `LINEAR_API_KEY` in your shell, then install with the prompt below.
-2. Open the Issues panel: on a branch named like `ENG-123-…` it shows that issue; otherwise use the **All** tab.
-3. From **Actions**, choose **Create worktree** to start a new space with an agent that already has the issue.
+1. Install Branch Issue with the prompt below.
+2. For Linear (the default), export `LINEAR_API_KEY`. For GitHub Issues, sign in with `gh auth login --hostname github.com` and set **Issue provider** to GitHub.
+3. Open the **Issues** panel. In Linear, a branch named like `ENG-123-…` opens that issue; otherwise use **All**. In GitHub mode, select a row to open it in GitHub.
 
 ## Install
 
@@ -16,7 +16,7 @@ Copy this prompt into your Herdr agent:
 
 > Read ~/.config/herdr-app/AGENTS.md, then add this mod: https://github.com/munza/herdr-mods/tree/main/branch-issue
 
-Requirements: **Go 1.23+** to run the installer and build the helper, Git on the machines your spaces run on, and a **Linear personal API key**. Agent actions use `hc` and a running agent.
+Requirements: **Go 1.23+** to run the installer and build the Linear helper, and Git on the machines your spaces run on. Linear needs a **personal API key**; GitHub Issues needs an authenticated **`gh`** CLI. Linear agent actions use `hc` and a running agent.
 
 The helper talks to Linear's GraphQL API with the key from the **`LINEAR_API_KEY`** environment variable and nothing else: there's no key field, keychain entry or token file. Create a personal key at https://linear.app/settings/api and export it in your shell. The helper reads its own environment, then asks your login shell, so a key exported in `.zshrc` or by home-manager is found even when Herdr was launched from the Dock. If the key is missing or rejected, the panel says so, shows what to run, and offers Try again.
 
@@ -61,6 +61,16 @@ No key binding ships with it.
 
 ## Use
 
+### GitHub Issues
+
+Sign in with `gh` on the computer running Herdr. In Better Config, set **Issue provider** to GitHub, or add `"settings": { "provider": "github" }` to the installed `mod.json` (merging with any existing settings).
+
+The list follows the checkout's GitHub.com repository: the branch's tracking remote first, then `origin`, `upstream`, and other configured GitHub remotes. It shows open issues, not pull requests. **Linked to this checkout** shows explicit `owner/repo#123` references in the branch name and closing references from a PR whose head matches the checkout. A bare branch number, a plain PR mention, or an ambiguous PR does not link an issue. The open list works without a link.
+
+GitHub mode is read-only. It needs no Linear key and cannot post comments, change issues, or create worktrees. Set the provider back to `linear` to use the original panel.
+
+### Linear
+
 Built to look like Herdr's own panels and to fit how you work with agents: see where an issue stands, give it its own worktree, hand it to an agent, and keep it up to date. A sibling of [Branch PR](../branch-pr/README.md).
 
 - **Two lists in the sidebar:** **Branch** for the issues on your checkout's branch, which goes straight to the details when there's only one, and **All** with search, My issues / Active cycle / All issues, state and team filters, grouped by workflow state in collapsible groups. Opening an issue stays in the sidebar, like a commit in Better Changes.
@@ -85,7 +95,8 @@ A visible panel rereads Linear on a timer. A hidden panel doesn't refresh, and c
 
 | Key | Default | What it does |
 | --- | --- | --- |
-| `refresh.every` | `60s` | How often a visible panel rereads Linear. |
+| `provider` | `linear` | `linear` for the full Linear panel, or `github` for read-only GitHub Issues. |
+| `refresh.every` | `60s` | How often a visible panel rereads its provider. |
 | `refresh.search_debounce` | `450ms` | How long typing pauses before a search runs. |
 | `branch.max_identifiers` | `4` | The most issue identifiers one branch may carry (at least 1). |
 | `list.default.scope` | `mine` | The list's first scope until a saved view exists: `mine`, `cycle` or `all`. |
@@ -99,6 +110,7 @@ The defaults as a `settings` block:
 
 ```json
 "settings": {
+  "provider": "linear",
   "refresh": { "every": "60s", "search_debounce": "450ms" },
   "branch": { "max_identifiers": 4 },
   "list": { "default": { "scope": "mine", "state": "active", "team": "" } },
@@ -130,6 +142,8 @@ go -C helper run ./install --update
 </details>
 
 ## For developers
+
+Shared `branch-issue.open`, `{ space, identifier, at }`, opens that item: a copy showing the space `space` opens it within 10 seconds of `at`, once. [Better Search](../better-search/README.md) writes it for `$` (since 2.5.0).
 
 Command: `branch-issue.refresh` reloads the panel. Commands reach copies that are showing.
 

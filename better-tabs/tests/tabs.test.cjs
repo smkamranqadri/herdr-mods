@@ -810,12 +810,12 @@ test("the names it set are kept in shared state, and closed tabs leave it", () =
     ],
   );
   tick();
-  assert.deepEqual(plain(h.data["better-tabs.names"]), { t1: { pending: "lantern", at: 1_000_300 }, t2: { manual: true } });
+  assert.deepEqual(plain(h.data["better-tabs.names"]), { t1: { pending: "lantern", at: 1_000_300 }, t2: { manual: true, adopted: "server" } });
   tick();
-  assert.deepEqual(plain(h.data["better-tabs.names"]), { t1: { auto: "lantern" }, t2: { manual: true } });
+  assert.deepEqual(plain(h.data["better-tabs.names"]), { t1: { auto: "lantern" }, t2: { manual: true, adopted: "server" } });
   space.tabs.splice(1, 1);
   tick();
-  assert.deepEqual(plain(h.data["better-tabs.names"]), { t1: { auto: "lantern" }, t2: { manual: true, gone: 1_000_900 } });
+  assert.deepEqual(plain(h.data["better-tabs.names"]), { t1: { auto: "lantern" }, t2: { manual: true, adopted: "server", gone: 1_000_900 } });
   tick(10_000);
   assert.deepEqual(plain(h.data["better-tabs.names"]), { t1: { auto: "lantern" } });
 });
@@ -945,7 +945,7 @@ test("a moment with no tabs listed forgets nothing", () => {
   tick();
   const tabs = space.tabs.splice(0);
   tick();
-  assert.deepEqual(plain(h.data["better-tabs.names"]), { t1: { manual: true } });
+  assert.deepEqual(plain(h.data["better-tabs.names"]), { t1: { manual: true, adopted: "server" } });
   space.tabs.push(...tabs);
   assert.deepEqual(tick(), []);
 });
@@ -955,4 +955,65 @@ test("nothing is renamed before the installed settings are read", () => {
   h.tabs.settingsReady = false;
   assert.deepEqual(tick(), []);
   assert.equal(h.data["better-tabs.names"], undefined);
+});
+
+test("a tab the agent menu named follows the agent once it starts, even if a shell was seen first", () => {
+  const pane = { pane: "p1", tab: "t1", terminal: "x1", title: "sam@desk:~/work/lantern", cwd: "/work/lantern", program: SHELL };
+  const { tick } = naming([named("t1", 1, "OpenCode")], [pane]);
+  assert.deepEqual(tick(), []);
+  Object.assign(pane, { title: "OC | Fix the login form", program: AGENT("OpenCode") });
+  assert.deepEqual(tick(), [{ id: "t1", name: "OC | Fix the login form" }]);
+});
+
+test("a name the person typed stays when an agent starts in the tab", () => {
+  const pane = { pane: "p1", tab: "t1", terminal: "x1", title: "sam@desk:~/work/lantern", cwd: "/work/lantern", program: SHELL };
+  const { tick } = naming([named("t1", 1, "login")], [pane]);
+  assert.deepEqual(tick(), []);
+  Object.assign(pane, { title: "OC | Fix the login form", program: AGENT("OpenCode") });
+  assert.deepEqual(tick(), []);
+});
+
+test("the agent menu's name is matched without regard to case, or by the agent's key", () => {
+  const shell = () => ({ pane: "p1", tab: "t1", terminal: "x1", title: "sam@desk:~/work/lantern", cwd: "/work/lantern", program: SHELL });
+  for (const menuName of ["claude code", "claude"]) {
+    const pane = shell();
+    const { tick } = naming([named("t1", 1, menuName)], [pane]);
+    assert.deepEqual(tick(), []);
+    Object.assign(pane, { title: "Fix the login form", program: { ...AGENT("Claude Code"), key: "claude" } });
+    assert.deepEqual(tick(), [{ id: "t1", name: "Fix the login form" }], menuName);
+  }
+});
+
+test("a tab the agent menu named and the person renamed before the agent started keeps their name", () => {
+  const pane = { pane: "p1", tab: "t1", terminal: "x1", title: "sam@desk:~/work/lantern", cwd: "/work/lantern", program: SHELL };
+  const { tick, space } = naming([named("t1", 1, "OpenCode")], [pane]);
+  assert.deepEqual(tick(), []);
+  space.tabs[0].name = "Login";
+  assert.deepEqual(tick(), []);
+  space.tabs[0].name = "OpenCode";
+  assert.deepEqual(tick(), []);
+  Object.assign(pane, { title: "OC | Fix the login form", program: AGENT("OpenCode") });
+  assert.deepEqual(tick(), []);
+});
+
+test("a name the person typed that matches the agent's name stays", () => {
+  const pane = { pane: "p1", tab: "t1", terminal: "x1", title: "Fix the login form", cwd: "/work", program: AGENT("Claude Code") };
+  const { tick, space } = naming([unnamed("t1", 1)], [pane]);
+  assert.deepEqual(tick(), [{ id: "t1", name: "Fix the login form" }]);
+  space.tabs[0].name = "Claude Code";
+  assert.deepEqual(tick(2000), []);
+  pane.title = "Write the tests";
+  assert.deepEqual(tick(), []);
+});
+
+test("a name the person typed that matches a program that isn't an agent stays when it quits", () => {
+  const agent = { pane: "p1", tab: "t1", terminal: "x1", title: "Fix the login form", cwd: "/work", program: AGENT("Claude Code") };
+  const editor = { pane: "p2", tab: "t1", terminal: "x2", title: "nvim", cwd: "/work/lantern", program: NVIM };
+  const { tick, space } = naming([unnamed("t1", 1)], [agent, editor]);
+  assert.deepEqual(tick(), [{ id: "t1", name: "Fix the login form" }]);
+  space.tabs[0].name = "Neovim";
+  assert.deepEqual(tick(2000), []);
+  Object.assign(editor, { title: "sam@desk:~/work/lantern", program: SHELL });
+  agent.title = "Write the tests";
+  assert.deepEqual(tick(), []);
 });

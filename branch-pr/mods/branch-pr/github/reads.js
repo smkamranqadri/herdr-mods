@@ -146,6 +146,8 @@ export const readMethods = {
   },
 
   refresh(cx) {
+    this.settleToken++;
+    this.settling = false;
     this.loadBranchPRs(cx);
     this.resolveRepo(cx);
     if (this.pr) this.openPR(this.pr.number, cx, this.pr.repository);

@@ -61,13 +61,19 @@
       "description": "Your changes. A setting left out uses its default.",
       "additionalProperties": false,
       "properties": {
+        "provider": {
+          "title": "Issue provider",
+          "enum": ["linear", "github"],
+          "default": "linear",
+          "description": "Use Linear, or opt in to read-only GitHub Issues for the active checkout using the existing GitHub CLI login."
+        },
         "refresh": {
           "type": "object",
           "additionalProperties": false,
           "properties": {
             "every": {
               "title": "Refresh",
-              "description": "How often a visible panel rereads Linear.",
+              "description": "How often a visible panel refreshes issues.",
               "type": [
                 "string",
                 "integer"

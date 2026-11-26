@@ -10,6 +10,7 @@ import {
   hunkKey,
   isImage,
   isMarkdown,
+  REFERENCE,
   languageOf,
   markdownBlocks,
   parentOf,
@@ -17,9 +18,9 @@ import {
   resolvePath,
   viewable,
 } from "../files/model.js";
-import { WHOLE_FILE_LINES, fenceLanguage, highlightLines, languageOf as lexerLanguage, syntaxColors, tokenizeLine } from "../syntax.js";
+import { WHOLE_FILE_LINES, fenceLanguage, languageOf as lexerLanguage, syntaxColors, tokenizeLine } from "../syntax.js";
 import { viewerEntries } from "../actions/open.js";
-import { BUSY, pickCopyImage, pickRm } from "../files/shell.js";
+import { BUSY, pickCopyImage, pickFetchImage, pickRm } from "../files/shell.js";
 import { editorId, foundEditors } from "../actions/outside.js";
 import { fileIcon, isLight } from "../files/file-icons.js";
 import { TEXT, FileIcon, IconButton, Markdown, Message, MenuButton, TextButton, codeFont, codeSize } from "./ui.js";
@@ -28,6 +29,8 @@ const CHAR_WIDTH = 0.62; // Of the code font's size, to size the sideways scroll
 const LINE_COLUMNS = 6; // The number column and a margin, in the same units.
 const rowHeight = () => Math.round(codeSize() * 1.6);
 const REMOVED_ROW = 8;
+const COLOR_CHARS = 4000;
+const COLOR_TICK_MS = 16;
 
 // Copies go in a hidden folder: saving any other file in a mod's folder makes Herdr reload
 // the mod, which threw the tree away on every picture opened. The copy itself, and how it's
@@ -35,16 +38,6 @@ const REMOVED_ROW = 8;
 const CACHE = "mods/better-files/.cache";
 const extension = (path) => path.split(".").pop().toLowerCase();
 const absolute = (copy) => (copy ? `${appHome()}/${copy}` : "");
-// $1 a picture's web address, $2 its copy without an extension. A copy under a day old is used
-// as it is; otherwise it's downloaded (5 MB and 20 s at most) and named by the type the server
-// gives, which is how a badge with no extension in its address is known as SVG. A download that
-// fails leaves its `.part`, which the next try writes over. Prints the copy's path. Its name is
-// kept when it's downloaded again, so Herdr may show the old bytes until it restarts: a badge.
-const FETCH_IMAGE = `for c in "$2".*; do case "$c" in *.part) continue;; esac; [ -f "$c" ] && [ -n "$(find "$c" -mmin -1440)" ] && { printf %s "$c"; exit 0; }; done
-mkdir -p -- "$(dirname -- "$2")" && t="$2.part" || exit 1
-type=$(curl -fsSL --max-time 20 --max-filesize 5000000 -o "$t" -w '%{content_type}' -- "$1") || exit 1
-case "$type" in *svg*) e=svg;; *png*) e=png;; *jpeg*|*jpg*) e=jpg;; *gif*) e=gif;; *webp*) e=webp;; *) exit 1;; esac
-mv -f -- "$t" "$2.$e" && printf %s "$2.$e"`;
 const COPIED_MS = 1500;
 
 // A short, stable name for a web address, so the same badge is one file in the cache.
@@ -53,16 +46,6 @@ const webName = (url) => {
   for (let i = 0; i < url.length; i++) hash = Math.imul(hash ^ url.charCodeAt(i), 16777619);
   return `web-${(hash >>> 0).toString(16)}`;
 };
-
-// A code block's lines as runs, coloured once per block; a huge one, or one the lexer fails
-// on, stays plain.
-function codeRuns(block) {
-  const lines = block.text.split("\n");
-  try {
-    if (lines.length <= WHOLE_FILE_LINES) return highlightLines(lines, fenceLanguage(block.lang));
-  } catch {}
-  return lines.map((line) => [{ text: line, kind: null }]);
-}
 
 export const viewerMethods = {
   // What this tab shows: the registry, then what it was opened with, after a restart.
@@ -125,6 +108,7 @@ export const viewerMethods = {
       cx.notify();
     }
     this.publishHead();
+    this.colorStep(cx);
   },
 
   // Asked on every check, not just when the text changes: a commit clears marks without
@@ -310,23 +294,63 @@ export const viewerMethods = {
   },
 
   // Coloured once per version too, top to bottom, so a comment or string opened on one
-  // line is still one on the next. A huge file, or one the lexer fails on, gets no runs
-  // here: its rows are coloured one at a time as they're drawn (`rowRuns`). The runs are
-  // kept only once they're complete, so a row never shows another file's text.
+  // line is still one on the next, in steps by `colorStep`. Until those finish, and for a
+  // huge file or one the lexer fails on, there are no runs here: rows are coloured one at a
+  // time as they're drawn (`rowRuns`). The runs are kept only once they're complete, so a row
+  // never shows another file's text.
   lineRuns(lines) {
     // Keyed on the path too: two files with the same text share `lines`, not a language.
     if (this.runsFor !== lines || this.runsPath !== this.file.path) {
-      let runs = null;
-      if (lines.length <= WHOLE_FILE_LINES) {
-        try {
-          runs = highlightLines(lines, lexerLanguage(this.file.path));
-        } catch {}
-      }
-      this.runs = runs;
+      const path = this.file.path;
+      this.runs = null;
       this.runsFor = lines;
-      this.runsPath = this.file.path;
+      this.runsPath = path;
+      if (lines.length <= WHOLE_FILE_LINES)
+        this.colorLater(lines, lexerLanguage(path), {
+          live: () => this.runsFor === lines && this.runsPath === path,
+          done: (runs) => (this.runs = runs),
+        });
     }
     return this.runs;
+  },
+
+  colorLater(lines, language, { live, done }) {
+    (this.colorJobs ??= []).push({ lines, language, live, done, runs: [], state: null });
+  },
+
+  colorStep(cx) {
+    const jobs = this.colorJobs;
+    if (this.colorQueued || !jobs?.length) return;
+    let budget = COLOR_CHARS;
+    while (budget > 0 && jobs.length) {
+      const job = jobs[0];
+      if (!job.live()) {
+        jobs.shift();
+        continue;
+      }
+      try {
+        while (budget > 0 && job.runs.length < job.lines.length) {
+          const line = job.lines[job.runs.length];
+          const result = tokenizeLine(line, job.language, job.state);
+          job.state = result.state;
+          job.runs.push(result.runs);
+          budget -= line.length + 1;
+        }
+      } catch {
+        jobs.shift();
+        continue;
+      }
+      if (job.runs.length < job.lines.length) break;
+      jobs.shift();
+      job.done(job.runs);
+      cx.notify();
+    }
+    if (!jobs.length) return;
+    this.colorQueued = true;
+    cx.timer.after(COLOR_TICK_MS, (cx) => {
+      this.colorQueued = false;
+      this.colorStep(cx);
+    });
   },
 
   // One row's runs: from the whole-file pass when there is one, else that line on its own.
@@ -521,7 +545,8 @@ export const viewerMethods = {
       if (url) {
         const base = absolute(`${CACHE}/${webName(url)}`);
         cx.spawn(async (cx) => {
-          const result = await exec("sh", ["-c", FETCH_IMAGE, "fetch-image", url, base], {}).catch(() => null);
+          const { program, args } = pickFetchImage(url, base, window()?.platform);
+          const result = await exec(program, args, {}).catch(() => null);
           this.markdownCopying.delete(key);
           const copy = result?.code === 0 ? result.stdout.trim() : "";
           if (copy.startsWith(`${appHome()}/`)) this.markdownCopies.set(key, copy.slice(appHome().length + 1));
@@ -632,8 +657,17 @@ export const viewerMethods = {
   previewCode(block, i) {
     const t = theme();
     const SYNTAX = syntaxColors(t);
-    block.runs ??= codeRuns(block);
-    const widest = block.text.split("\n").reduce((n, line) => Math.max(n, line.length), 0);
+    const lines = block.text.split("\n");
+    if (!block.runs && !block.queued) {
+      block.queued = true;
+      if (lines.length <= WHOLE_FILE_LINES)
+        this.colorLater(lines, fenceLanguage(block.lang), {
+          live: () => this.blocks?.includes(block),
+          done: (runs) => (block.runs = runs),
+        });
+    }
+    const blockRuns = block.runs ?? lines.map((line) => [{ text: line, kind: null }]);
+    const widest = lines.reduce((n, line) => Math.max(n, line.length), 0);
     const copied = this.copiedCode === i;
     return v_flex()
       .id(`viewer-code-${i}`)
@@ -684,7 +718,7 @@ export const viewerMethods = {
               .font_family(codeFont())
               .text_size(codeSize())
               .children(
-                block.runs.map((runs) =>
+                blockRuns.map((runs) =>
                   h_flex()
                     .h(rowHeight())
                     .items_center()
@@ -717,15 +751,30 @@ export const viewerMethods = {
       .py(16)
       .gap(12)
       .children(
-        this.previewBlocks().map((block, i) =>
-          block.type === "image"
-            ? this.previewImage(block, `viewer-image-${i}`)
-            : block.type === "images"
-              ? this.previewImages(block, i)
-              : block.type === "code"
-                ? this.previewCode(block, i)
-                : Markdown(`viewer-md-${this.viewerId}-${i}`, block.text).on_link_click((url, cx) => this.followLink(url, cx)),
-        ),
+        this.previewBlocks().map((block, i) => {
+          if (block.type === "image") return this.previewImage(block, `viewer-image-${i}`);
+          if (block.type === "images") return this.previewImages(block, i);
+          if (block.type === "code") return this.previewCode(block, i);
+
+          const id = `viewer-md-${this.viewerId}-${i}`;
+          const markdown = (key, text) => Markdown(key, text).on_link_click((url, cx) => this.followLink(url, cx));
+          // shortcut: style leading ATX headings; use native heading styles when TextView exposes them.
+          const heading = /^( {0,3}(#{1,6})(?:[ \t]+[^\n]*|(?=\n|$)))(?:\n|$)/.exec(block.text);
+          const section = i > 0 && Boolean(heading);
+          if (!heading || heading[2].length > 2) return markdown(id, block.text).when(section, (el) => el.mt(12));
+
+          const body = block.text.slice(heading[0].length);
+          const lines = body.split("\n").filter((line) => line.trim());
+          const references = lines.filter((line) => REFERENCE.test(line));
+          return v_flex()
+            .when(section, (el) => el.mt(12))
+            .gap(10)
+            .child(
+              div().border_b_1().border_color(theme().border).pb(5)
+                .child(markdown(id, [heading[1], "", ...references].join("\n"))),
+            )
+            .when(lines.length > references.length, (el) => el.child(markdown(`${id}-body`, body)));
+        }),
       );
   },
 

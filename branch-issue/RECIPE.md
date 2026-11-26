@@ -1,10 +1,16 @@
 # Branch Issue
 
-A Linear panel for a person's Herdr window, for directing agents rather than managing a tracker. Judge any addition by whether it helps someone see where an issue stands, start work on it, hand it to an agent, or keep it current. It reads the key from `LINEAR_API_KEY` only, and the mod never sees it.
+An issue panel for directing agents rather than managing a tracker. Linear is the default, with writable actions; its helper reads `LINEAR_API_KEY`, and the mod never sees it. GitHub Issues is an opt-in, read-only view.
 
 ![Branch Issue](preview.png)
 
-## What you see
+## GitHub Issues mode
+
+Set `settings.provider` to `github`. Do not load Linear in this mode. Use Git on the checkout's machine to find the repository, preferring the branch's tracking remote, then `origin`, `upstream`, and other GitHub.com remotes. Read through the local authenticated `gh`, including for remote spaces.
+
+Show open repository issues without PRs and open each row in GitHub. Show linked issues separately, and only for repository-qualified branch references or closing references from a PR known to belong to this branch. Never infer a link from a bare number. Distinguish missing authentication, unsupported remotes, read failures, and a successful empty list. Refresh follows the active checkout without showing stale results. No mutation or worktree controls in this mode.
+
+## What you see in Linear mode
 
 It follows Better Changes and Branch PR, in one framed sidebar panel, radius 10, with no center tab. Headers are 42px.
 

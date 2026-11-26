@@ -81,25 +81,31 @@ function paneName(pane, homePath) {
   return { name: topic ? title : name, rank: 3 };
 }
 
-// The name a tab's panes give it, and every name it could have had from them, so a tab named
-// before this mod knew it can be told from one the person named.
+// The name a tab's panes give it, every name it could have had from them, so a tab named
+// before this mod knew it can be told from one the person named, and its agents' names and
+// keys in lower case, which Herdr's agent menu names a new tab after.
 function tabWants(tabPanes, homePath) {
   let best = null;
   const known = new Set();
+  const agents = new Set();
   for (const pane of tabPanes) {
     const named = paneName(pane, homePath);
     if (!named) continue;
     const names = [named.name, titleText(pane.title, pane), cleanName(pane.program.name)];
     for (const name of [...names, folderName(pane.cwd, homePath)]) if (name) known.add(name);
+    if (pane.program.agent)
+      for (const name of [cleanName(pane.program.name), cleanName(pane.program.key)]) if (name) agents.add(name.toLowerCase());
     if (named.name && named.rank > (best?.rank ?? 0)) best = named;
   }
-  return { name: best?.name ?? null, known };
+  return { name: best?.name ?? null, known, agents };
 }
 
 // What to ask Herdr for now. records: tab ID → { auto: the name this mod set } or
-// { manual: true }, with { pending, at } while a rename is on its way and { gone } once the tab
-// has closed. They're shared, so every copy of the bar waits for the same request. Returns the
-// renames and the records to keep, without changing what it was given.
+// { manual: true }, the manual one with { adopted: the name } when the mod first saw the tab
+// already named (by Herdr's agent menu, say, before its agent started), with { pending, at }
+// while a rename is on its way and { gone } once the tab has closed. They're shared, so every
+// copy of the bar waits for the same request. Returns the renames and the records to keep,
+// without changing what it was given.
 export function planNames(allSpaces, allPanes, records, now, homePath = homeFolder()) {
   const tabs = allSpaces.flatMap((space) => space.tabs ?? []);
   // Herdr lists no tabs only while it starts or restores, so nothing is decided then.
@@ -130,8 +136,12 @@ export function planNames(allSpaces, allPanes, records, now, homePath = homeFold
     }
     if (!tab.named) record = undefined;
     else if (!record) {
-      if (wants.known.size) record = wants.known.has(current) ? { auto: current } : { manual: true };
+      if (wants.known.size) record = wants.known.has(current) ? { auto: current } : { manual: true, adopted: current };
     } else if (record.auto !== undefined && current !== record.auto) record = { manual: true };
+    else if (record.adopted !== undefined && current !== record.adopted) record = { manual: true };
+    // A tab first seen with an agent's name, still showing it, follows that agent once it starts.
+    // A name the person typed never carries adopted, so it stays.
+    if (record?.adopted !== undefined && current && wants.agents.has(current.toLowerCase())) record = { auto: current };
     if (record?.manual) {
       next[tab.id] = record;
       continue;
